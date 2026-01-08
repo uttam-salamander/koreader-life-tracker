@@ -7,7 +7,9 @@ Visual day view with quests grouped by time-of-day slots.
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local DateTimeWidget = require("ui/widget/datetimewidget")
 local Device = require("device")
+local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -37,6 +39,35 @@ local TOUCH_TARGET_HEIGHT = 48
 local BUTTON_WIDTH = 50
 
 --[[--
+Dispatch a corner gesture to the user's configured action.
+@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
+@treturn bool True if gesture was handled
+--]]
+function Timeline:dispatchCornerGesture(gesture_name)
+    if self.ui and self.ui.gestures then
+        local gesture_manager = self.ui.gestures
+        local settings = gesture_manager.gestures or {}
+        local action = settings[gesture_name]
+        if action then
+            local Dispatcher = require("dispatcher")
+            Dispatcher:execute(action)
+            return true
+        end
+    end
+
+    -- Fallback to common corner actions
+    if gesture_name == "tap_top_right_corner" then
+        self.ui:handleEvent(Event:new("ToggleFrontlight"))
+        return true
+    elseif gesture_name == "tap_top_left_corner" then
+        self.ui:handleEvent(Event:new("ToggleBookmark"))
+        return true
+    end
+
+    return false
+end
+
+--[[--
 Show the timeline view for a specific date (defaults to today).
 --]]
 function Timeline:show(ui, date)
@@ -52,7 +83,7 @@ Navigate to a different day.
 function Timeline:navigateDay(offset)
     -- Parse current view_date
     local year, month, day = self.view_date:match("(%d+)-(%d+)-(%d+)")
-    local current_time = os.time({year = tonumber(year), month = tonumber(month), day = tonumber(day)})
+    local current_time = os.time({year = tonumber(year) or 2025, month = tonumber(month) or 1, day = tonumber(day) or 1})
 
     -- Calculate new date
     local new_time = current_time + (offset * 86400)
@@ -63,6 +94,33 @@ function Timeline:navigateDay(offset)
         UIManager:close(self.timeline_widget)
     end
     self:showTimelineView()
+end
+
+--[[--
+Show date picker dialog to select a specific date.
+Uses KOReader's DateTimeWidget for day/month/year selection.
+--]]
+function Timeline:showDatePicker()
+    -- Parse current view_date
+    local year, month, day = self.view_date:match("(%d+)-(%d+)-(%d+)")
+
+    local date_widget = DateTimeWidget:new{
+        year = tonumber(year) or tonumber(os.date("%Y")),
+        month = tonumber(month) or tonumber(os.date("%m")),
+        day = tonumber(day) or tonumber(os.date("%d")),
+        ok_text = _("Go to Date"),
+        title_text = _("Select Date"),
+        callback = function(time)
+            -- Format selected date
+            self.view_date = string.format("%04d-%02d-%02d", time.year, time.month, time.day)
+            -- Refresh view
+            if self.timeline_widget then
+                UIManager:close(self.timeline_widget)
+            end
+            self:showTimelineView()
+        end
+    }
+    UIManager:show(date_widget)
 end
 
 --[[--
@@ -79,25 +137,96 @@ function Timeline:showTimelineView()
 
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Header with date (in top zone - non-interactive)
+    -- Header with date and navigation (in top zone - visual only, gestures below)
     local is_today = self.view_date == os.date("%Y-%m-%d")
     local view_time = os.time({
-        year = tonumber(self.view_date:sub(1,4)),
-        month = tonumber(self.view_date:sub(6,7)),
-        day = tonumber(self.view_date:sub(9,10))
+        year = tonumber(self.view_date:sub(1,4)) or 2025,
+        month = tonumber(self.view_date:sub(6,7)) or 1,
+        day = tonumber(self.view_date:sub(9,10)) or 1
     })
-    local date_str = os.date("%A, %B %d", view_time)
-    local header_text = is_today and ("TODAY - " .. date_str) or date_str
+    local display_date = os.date("%A, %B %d", view_time)
+    local header_text = is_today and ("TODAY") or display_date
 
+    -- Date navigation row: [<] [DATE] [>]
+    local NAV_BUTTON_WIDTH = 40
+    local date_width = content_width - NAV_BUTTON_WIDTH * 2 - Size.padding.small * 2
+
+    -- Previous day button
+    local prev_button = FrameContainer:new{
+        width = NAV_BUTTON_WIDTH,
+        height = TOUCH_TARGET_HEIGHT,
+        padding = Size.padding.small,
+        bordersize = 1,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
+            TextWidget:new{
+                text = "<",
+                face = Font:getFace("tfont", 20),
+                bold = true,
+            },
+        },
+    }
+
+    -- Date display (tappable to open date picker)
+    local date_display = FrameContainer:new{
+        width = date_width,
+        height = TOUCH_TARGET_HEIGHT,
+        padding = Size.padding.small,
+        bordersize = 1,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = date_width - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
+            TextWidget:new{
+                text = header_text,
+                face = Font:getFace("tfont", 16),
+                bold = is_today,
+            },
+        },
+    }
+
+    -- Next day button
+    local next_button = FrameContainer:new{
+        width = NAV_BUTTON_WIDTH,
+        height = TOUCH_TARGET_HEIGHT,
+        padding = Size.padding.small,
+        bordersize = 1,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
+            TextWidget:new{
+                text = ">",
+                face = Font:getFace("tfont", 20),
+                bold = true,
+            },
+        },
+    }
+
+    local nav_row = HorizontalGroup:new{ align = "center" }
+    table.insert(nav_row, prev_button)
+    table.insert(nav_row, HorizontalSpan:new{ width = Size.padding.small })
+    table.insert(nav_row, date_display)
+    table.insert(nav_row, HorizontalSpan:new{ width = Size.padding.small })
+    table.insert(nav_row, next_button)
+
+    table.insert(content, nav_row)
+
+    -- Store nav button positions for tap handling
+    self.nav_button_x = {
+        prev_start = Size.padding.large,
+        prev_end = Size.padding.large + NAV_BUTTON_WIDTH,
+        date_start = Size.padding.large + NAV_BUTTON_WIDTH + Size.padding.small,
+        date_end = Size.padding.large + NAV_BUTTON_WIDTH + Size.padding.small + date_width,
+        next_start = Size.padding.large + NAV_BUTTON_WIDTH + Size.padding.small + date_width + Size.padding.small,
+        next_end = content_width + Size.padding.large,
+    }
+    self.nav_button_width = NAV_BUTTON_WIDTH
+    self.date_display_width = date_width
+
+    -- Tap hint
     table.insert(content, TextWidget:new{
-        text = header_text,
-        face = Font:getFace("tfont", 20),
-        bold = true,
-    })
-    -- Navigation hint
-    table.insert(content, TextWidget:new{
-        text = _("< Swipe to navigate days >"),
-        face = Font:getFace("cfont", 12),
+        text = _("Tap date to pick • Swipe to navigate"),
+        face = Font:getFace("cfont", 11),
         fgcolor = Blitbuffer.gray(0.5),
     })
 
@@ -240,22 +369,126 @@ function Timeline:showTimelineView()
     -- Setup quest tap handlers (below top zone)
     self:setupQuestTapHandlers()
 
-    -- Top zone tap handler - CLOSE plugin to access KOReader menu
-    local timeline = self
-    self.timeline_widget.ges_events.TopTap = {
+    -- Date navigation tap handlers
+    -- The nav row starts at top_safe_zone - header_height (approx)
+    local nav_row_y = Size.padding.large
+    local nav_row_height = TOUCH_TARGET_HEIGHT
+
+    -- Previous day button tap
+    self.timeline_widget.ges_events.PrevDayTap = {
         GestureRange:new{
             ges = "tap",
             range = Geom:new{
-                x = 0,
+                x = self.nav_button_x.prev_start,
+                y = nav_row_y,
+                w = self.nav_button_width,
+                h = nav_row_height,
+            },
+        },
+    }
+    self.timeline_widget.onPrevDayTap = function()
+        self:navigateDay(-1)
+        return true
+    end
+
+    -- Date display tap (opens date picker)
+    self.timeline_widget.ges_events.DatePickerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = self.nav_button_x.date_start,
+                y = nav_row_y,
+                w = self.date_display_width,
+                h = nav_row_height,
+            },
+        },
+    }
+    self.timeline_widget.onDatePickerTap = function()
+        self:showDatePicker()
+        return true
+    end
+
+    -- Next day button tap
+    self.timeline_widget.ges_events.NextDayTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = self.nav_button_x.next_start,
+                y = nav_row_y,
+                w = self.nav_button_width,
+                h = nav_row_height,
+            },
+        },
+    }
+    self.timeline_widget.onNextDayTap = function()
+        self:navigateDay(1)
+        return true
+    end
+
+    -- KOReader gesture zone dimensions
+    local corner_size = math.floor(screen_width / 8)
+    local corner_height = math.floor(screen_height / 8)
+
+    -- Top CENTER zone - Opens KOReader menu
+    self.timeline_widget.ges_events.TopCenterTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = corner_size,
                 y = 0,
-                w = screen_width,
+                w = screen_width - corner_size * 2,
                 h = top_safe_zone,
             },
         },
     }
-    self.timeline_widget.onTopTap = function()
-        UIManager:close(timeline.timeline_widget)
+    self.timeline_widget.onTopCenterTap = function()
+        if self.ui and self.ui.menu then
+            self.ui.menu:onShowMenu()
+        else
+            self.ui:handleEvent(Event:new("ShowReaderMenu"))
+        end
         return true
+    end
+
+    -- Corner tap handlers
+    self.timeline_widget.ges_events.TopLeftCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = 0, y = 0, w = corner_size, h = corner_height },
+        },
+    }
+    self.timeline_widget.onTopLeftCornerTap = function()
+        return self:dispatchCornerGesture("tap_top_left_corner")
+    end
+
+    self.timeline_widget.ges_events.TopRightCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = screen_width - corner_size, y = 0, w = corner_size, h = corner_height },
+        },
+    }
+    self.timeline_widget.onTopRightCornerTap = function()
+        return self:dispatchCornerGesture("tap_top_right_corner")
+    end
+
+    self.timeline_widget.ges_events.BottomLeftCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = 0, y = screen_height - corner_height, w = corner_size, h = corner_height },
+        },
+    }
+    self.timeline_widget.onBottomLeftCornerTap = function()
+        return self:dispatchCornerGesture("tap_bottom_left_corner")
+    end
+
+    self.timeline_widget.ges_events.BottomRightCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = screen_width - corner_size, y = screen_height - corner_height, w = corner_size, h = corner_height },
+        },
+    }
+    self.timeline_widget.onBottomRightCornerTap = function()
+        return self:dispatchCornerGesture("tap_bottom_right_corner")
     end
 
     self.timeline_widget.ges_events.Swipe = {
@@ -530,9 +763,9 @@ end
 
 --[[--
 Get all quests that should appear on a specific date.
-@param date_str Date in YYYY-MM-DD format
+@param _date_str Date in YYYY-MM-DD format (reserved for date-specific filtering)
 --]]
-function Timeline:getQuestsForDate(date_str)
+function Timeline:getQuestsForDate(_date_str)
     local all_quests = Data:loadAllQuests()
     if not all_quests then return {} end
 

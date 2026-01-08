@@ -9,6 +9,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
+local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -41,6 +42,43 @@ local TOUCH_TARGET_HEIGHT = 48
 local ENERGY_TAB_WIDTH = 90
 local ENERGY_TAB_HEIGHT = 44
 local BUTTON_WIDTH = 50
+
+--[[--
+Dispatch a corner gesture to the user's configured action.
+KOReader stores gesture settings in the gestures module.
+@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
+@treturn bool True if gesture was handled
+--]]
+function Dashboard:dispatchCornerGesture(gesture_name)
+    -- Try to access KOReader's gesture module for user settings
+    if self.ui and self.ui.gestures then
+        local gesture_manager = self.ui.gestures
+        -- Check if user has a gesture configured
+        local settings = gesture_manager.gestures or {}
+        local action = settings[gesture_name]
+        if action then
+            -- Dispatch the action
+            local Dispatcher = require("dispatcher")
+            Dispatcher:execute(action)
+            return true
+        end
+    end
+
+    -- Fallback: try common corner actions directly via event
+    -- Users often set top-right to toggle frontlight
+    if gesture_name == "tap_top_right_corner" then
+        -- Toggle frontlight is common setting
+        self.ui:handleEvent(Event:new("ToggleFrontlight"))
+        return true
+    elseif gesture_name == "tap_top_left_corner" then
+        -- Bookmark toggle is another common setting
+        self.ui:handleEvent(Event:new("ToggleBookmark"))
+        return true
+    end
+
+    -- No action configured, let gesture pass through
+    return false
+end
 
 --[[--
 Show the dashboard.
@@ -333,22 +371,97 @@ function Dashboard:showDashboardView()
     -- Add quest tap handlers (below top zone)
     self:setupQuestTapHandlers()
 
-    -- Top zone tap handler - CLOSE plugin to access KOReader menu
-    local dashboard = self
-    self.dashboard_widget.ges_events.TopTap = {
+    -- KOReader gesture zone dimensions (from defaults.lua)
+    -- DTAP_ZONE_MENU: {x = 0, y = 0, w = 1, h = 1/8} - top full width
+    -- Corner zones: 1/8 x 1/8 in each corner
+    local corner_size = math.floor(screen_width / 8)
+    local corner_height = math.floor(screen_height / 8)
+
+    -- Top CENTER zone tap handler - Opens KOReader menu (excludes corners)
+    self.dashboard_widget.ges_events.TopCenterTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = corner_size,  -- Start after top-left corner
+                y = 0,
+                w = screen_width - corner_size * 2,  -- Exclude both corners
+                h = top_safe_zone,
+            },
+        },
+    }
+    self.dashboard_widget.onTopCenterTap = function()
+        -- Show KOReader's reader menu by sending event
+        if self.ui and self.ui.menu then
+            self.ui.menu:onShowMenu()
+        else
+            -- Fallback: send event through UI manager
+            self.ui:handleEvent(Event:new("ShowReaderMenu"))
+        end
+        return true
+    end
+
+    -- Top-left corner tap handler - Dispatch to user's corner action
+    self.dashboard_widget.ges_events.TopLeftCornerTap = {
         GestureRange:new{
             ges = "tap",
             range = Geom:new{
                 x = 0,
                 y = 0,
-                w = screen_width,
-                h = top_safe_zone,
+                w = corner_size,
+                h = corner_height,
             },
         },
     }
-    self.dashboard_widget.onTopTap = function()
-        UIManager:close(dashboard.dashboard_widget)
-        return true
+    self.dashboard_widget.onTopLeftCornerTap = function()
+        return self:dispatchCornerGesture("tap_top_left_corner")
+    end
+
+    -- Top-right corner tap handler - Dispatch to user's corner action
+    self.dashboard_widget.ges_events.TopRightCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = screen_width - corner_size,
+                y = 0,
+                w = corner_size,
+                h = corner_height,
+            },
+        },
+    }
+    self.dashboard_widget.onTopRightCornerTap = function()
+        return self:dispatchCornerGesture("tap_top_right_corner")
+    end
+
+    -- Bottom-left corner tap handler
+    self.dashboard_widget.ges_events.BottomLeftCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = 0,
+                y = screen_height - corner_height,
+                w = corner_size,
+                h = corner_height,
+            },
+        },
+    }
+    self.dashboard_widget.onBottomLeftCornerTap = function()
+        return self:dispatchCornerGesture("tap_bottom_left_corner")
+    end
+
+    -- Bottom-right corner tap handler
+    self.dashboard_widget.ges_events.BottomRightCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = screen_width - corner_size,
+                y = screen_height - corner_height,
+                w = corner_size,
+                h = corner_height,
+            },
+        },
+    }
+    self.dashboard_widget.onBottomRightCornerTap = function()
+        return self:dispatchCornerGesture("tap_bottom_right_corner")
     end
 
     self.dashboard_widget.ges_events.Swipe = {

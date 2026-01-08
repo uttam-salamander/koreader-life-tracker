@@ -9,6 +9,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
+local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -42,6 +43,34 @@ local TYPE_TAB_WIDTH = 80
 
 -- Current view state
 Quests.current_type = "daily"
+
+--[[--
+Dispatch a corner gesture to the user's configured action.
+@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
+@treturn bool True if gesture was handled
+--]]
+function Quests:dispatchCornerGesture(gesture_name)
+    if self.ui and self.ui.gestures then
+        local gesture_manager = self.ui.gestures
+        local settings = gesture_manager.gestures or {}
+        local action = settings[gesture_name]
+        if action then
+            local Dispatcher = require("dispatcher")
+            Dispatcher:execute(action)
+            return true
+        end
+    end
+
+    if gesture_name == "tap_top_right_corner" then
+        self.ui:handleEvent(Event:new("ToggleFrontlight"))
+        return true
+    elseif gesture_name == "tap_top_left_corner" then
+        self.ui:handleEvent(Event:new("ToggleBookmark"))
+        return true
+    end
+
+    return false
+end
 
 --[[--
 Show the quests view.
@@ -195,22 +224,70 @@ function Quests:showQuestsView()
     -- Setup gesture handlers
     self:setupGestureHandlers(content_width)
 
-    -- Top zone tap handler - CLOSE plugin to access KOReader menu
-    local quests = self
-    self.quests_widget.ges_events.TopTap = {
+    -- KOReader gesture zone dimensions
+    local corner_size = math.floor(screen_width / 8)
+    local corner_height = math.floor(screen_height / 8)
+
+    -- Top CENTER zone - Opens KOReader menu
+    self.quests_widget.ges_events.TopCenterTap = {
         GestureRange:new{
             ges = "tap",
             range = Geom:new{
-                x = 0,
+                x = corner_size,
                 y = 0,
-                w = screen_width,
+                w = screen_width - corner_size * 2,
                 h = top_safe_zone,
             },
         },
     }
-    self.quests_widget.onTopTap = function()
-        UIManager:close(quests.quests_widget)
+    self.quests_widget.onTopCenterTap = function()
+        if self.ui and self.ui.menu then
+            self.ui.menu:onShowMenu()
+        else
+            self.ui:handleEvent(Event:new("ShowReaderMenu"))
+        end
         return true
+    end
+
+    -- Corner tap handlers
+    self.quests_widget.ges_events.TopLeftCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = 0, y = 0, w = corner_size, h = corner_height },
+        },
+    }
+    self.quests_widget.onTopLeftCornerTap = function()
+        return self:dispatchCornerGesture("tap_top_left_corner")
+    end
+
+    self.quests_widget.ges_events.TopRightCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = screen_width - corner_size, y = 0, w = corner_size, h = corner_height },
+        },
+    }
+    self.quests_widget.onTopRightCornerTap = function()
+        return self:dispatchCornerGesture("tap_top_right_corner")
+    end
+
+    self.quests_widget.ges_events.BottomLeftCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = 0, y = screen_height - corner_height, w = corner_size, h = corner_height },
+        },
+    }
+    self.quests_widget.onBottomLeftCornerTap = function()
+        return self:dispatchCornerGesture("tap_bottom_left_corner")
+    end
+
+    self.quests_widget.ges_events.BottomRightCornerTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{ x = screen_width - corner_size, y = screen_height - corner_height, w = corner_size, h = corner_height },
+        },
+    }
+    self.quests_widget.onBottomRightCornerTap = function()
+        return self:dispatchCornerGesture("tap_bottom_right_corner")
     end
 
     UIManager:show(self.quests_widget)
