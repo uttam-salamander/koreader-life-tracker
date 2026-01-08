@@ -582,14 +582,20 @@ Get quests filtered by energy level for today.
 --]]
 function Quests:getFilteredQuestsForToday(energy_level)
     local quests = Data:loadAllQuests()
+    local user_settings = Data:loadUserSettings()
     local filtered = {}
+
+    -- Get highest energy level from settings (first in list)
+    -- When at highest energy, user sees ALL quests regardless of requirement
+    local highest_energy = user_settings.energy_categories and user_settings.energy_categories[1] or "Energetic"
+    local is_high_energy = (energy_level == highest_energy)
 
     -- For daily quests
     for _, quest in ipairs(quests.daily or {}) do
         if not quest.completed then
             if quest.energy_required == "Any" or
                quest.energy_required == energy_level or
-               energy_level == "Energetic" then  -- Energetic sees all
+               is_high_energy then  -- High energy sees all
                 table.insert(filtered, quest)
             end
         end
@@ -600,7 +606,7 @@ function Quests:getFilteredQuestsForToday(energy_level)
         if not quest.completed then
             if quest.energy_required == "Any" or
                quest.energy_required == energy_level or
-               energy_level == "Energetic" then
+               is_high_energy then
                 table.insert(filtered, quest)
             end
         end

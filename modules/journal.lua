@@ -283,7 +283,7 @@ Get weekly mood data for bar chart.
 --]]
 function Journal:getWeeklyMood()
     local logs = Data:loadDailyLogs()
-    local settings = Data:loadSettings()
+    local settings = Data:loadUserSettings()
     local energy_categories = settings.energy_categories or {"Energetic", "Average", "Down"}
     local today = os.time()
     local day_abbrs = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
@@ -328,7 +328,7 @@ function Journal:generateInsight(weekly_stats, mood_data)
     local low_energy_days = 0
 
     local logs = Data:loadDailyLogs()
-    local settings = Data:loadSettings()
+    local settings = Data:loadUserSettings()
     local energy_categories = settings.energy_categories or {"Energetic", "Average", "Down"}
     local high_energy = energy_categories[1]
     local low_energy = energy_categories[#energy_categories]
