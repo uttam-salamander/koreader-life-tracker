@@ -6,7 +6,6 @@ Morning check-in, filtered quests, streak meter, heatmap, and reading stats.
 --]]
 
 local ButtonDialog = require("ui/widget/buttondialog")
-local CenterContainer = require("ui/widget/container/centercontainer")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local GestureRange = require("ui/gesturerange")
@@ -22,6 +21,8 @@ local _ = require("gettext")
 
 local Data = require("modules/data")
 local Quests = require("modules/quests")
+local Navigation = require("modules/navigation")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
 
 local Dashboard = {}
 
@@ -238,39 +239,71 @@ function Dashboard:showDashboardView()
         })
     end
 
-    -- Wrap in containers
+    -- Calculate content width (leave room for navigation tabs)
+    local tab_width = Navigation.TAB_WIDTH
+    local content_width = screen_width - tab_width
+
+    -- Wrap content in frame
     local padded_content = FrameContainer:new{
+        width = content_width,
+        height = Screen:getHeight(),
         padding = Size.padding.large,
         bordersize = 0,
         content,
     }
 
-    local centered = CenterContainer:new{
-        dimen = Screen:getSize(),
-        VerticalGroup:new{
-            align = "center",
-            padded_content,
-        },
+    -- Build navigation tabs
+    local nav_tabs = Navigation:buildTabColumn("dashboard", Screen:getHeight())
+
+    -- Main layout: content left, tabs right
+    local main_layout = HorizontalGroup:new{
+        align = "top",
+        padded_content,
+        nav_tabs,
+    }
+
+    -- Wrap in frame
+    local full_screen = FrameContainer:new{
+        width = screen_width,
+        height = Screen:getHeight(),
+        padding = 0,
+        bordersize = 0,
+        background = 0xFFFFFF,
+        main_layout,
     }
 
     -- Create input container for gestures
     self.dashboard_widget = InputContainer:new{
         dimen = Screen:getSize(),
-        centered,
+        full_screen,
     }
 
-    -- Add tap to close
+    -- Add swipe to navigate
     self.dashboard_widget.ges_events = {
-        TapClose = {
+        Swipe = {
             GestureRange:new{
-                ges = "tap",
+                ges = "swipe",
                 range = self.dashboard_widget.dimen,
             },
         },
     }
-    self.dashboard_widget.onTapClose = function()
+
+    -- Store ui reference for navigation
+    local ui = self.ui
+
+    self.dashboard_widget.onSwipe = function(_, _, ges)
+        if ges.direction == "east" then
+            -- Swipe right to close
+            UIManager:close(self.dashboard_widget)
+            return true
+        end
+        return false
+    end
+
+    -- Set tab change callback
+    Navigation.on_tab_change = function(tab_id)
         UIManager:close(self.dashboard_widget)
-        return true
+        Navigation:navigateTo(tab_id, ui)
     end
 
     UIManager:show(self.dashboard_widget)
