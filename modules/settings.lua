@@ -42,6 +42,19 @@ function Settings:show(ui)
                 end,
             },
             {
+                text = _("Lock Screen Dashboard"),
+                checked_func = function()
+                    return user_settings.lock_screen_dashboard == true
+                end,
+                callback = function()
+                    user_settings.lock_screen_dashboard = not user_settings.lock_screen_dashboard
+                    Data:saveUserSettings(user_settings)
+                    UIManager:close(menu)
+                    self:show(ui)
+                end,
+                help_text = _("Show dashboard when device wakes from sleep"),
+            },
+            {
                 text = _("Reset All Data"),
                 callback = function()
                     UIManager:close(menu)
@@ -398,6 +411,7 @@ function Settings:confirmResetData(ui)
                         streak_data = {current = 0, longest = 0, last_completed_date = nil},
                         today_energy = nil,
                         today_date = nil,
+                        lock_screen_dashboard = false,
                     })
                     Data:saveAllQuests({daily = {}, weekly = {}, monthly = {}})
                     Data:saveDailyLogs({})
