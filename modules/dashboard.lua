@@ -123,9 +123,10 @@ function Dashboard:showDashboardView()
     })
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
-    -- Separator
+    -- Separator (adjust width for navigation tabs)
+    local separator_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
     table.insert(content, LineWidget:new{
-        dimen = { w = screen_width - Size.padding.large * 2, h = Size.line.thick },
+        dimen = { w = separator_width, h = Size.line.thick },
     })
     table.insert(content, VerticalSpan:new{ width = Size.padding.default })
 

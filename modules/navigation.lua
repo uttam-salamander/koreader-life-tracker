@@ -28,8 +28,9 @@ Navigation.TABS = {
     {id = "journal",   label = "Jrnl", full = _("Journal")},
 }
 
--- Tab width for the right sidebar
-Navigation.TAB_WIDTH = 50
+-- Tab width for the right sidebar (larger for e-ink touch targets)
+-- 60px is approximately 10mm on typical e-ink displays, minimum for reliable touch
+Navigation.TAB_WIDTH = 60
 
 --[[--
 Create a wrapped content view with right-side tab navigation.
@@ -81,15 +82,17 @@ function Navigation:buildTabColumn(current_tab, height)
     for _, tab in ipairs(self.TABS) do
         local is_active = (tab.id == current_tab)
 
-        -- Tab background styling
-        local bg_color = is_active and 0x000000 or 0xEEEEEE
+        -- Tab background styling (high contrast for e-ink)
+        -- Active: black bg with white text (maximum contrast)
+        -- Inactive: white bg with black text and border
+        local bg_color = is_active and 0x000000 or 0xFFFFFF
         local fg_color = is_active and 0xFFFFFF or 0x000000
-        local border_size = is_active and 0 or 1
+        local border_size = is_active and 0 or 2
 
-        -- Create tab label (vertical text simulation using short labels)
+        -- Create tab label (larger font for e-ink readability)
         local label = TextWidget:new{
             text = tab.label,
-            face = Font:getFace("tfont", 12),
+            face = Font:getFace("tfont", 14),  -- Larger for e-ink
             fgcolor = fg_color,
             bold = is_active,
         }
