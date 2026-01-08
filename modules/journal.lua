@@ -46,15 +46,25 @@ function Journal:showJournalView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
+    -- KOReader reserves top 1/8 (12.5%) for menu gesture
+    local top_safe_zone = math.floor(screen_height / 8)
+
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Header
+    -- Header (in top zone - non-interactive)
     table.insert(content, TextWidget:new{
         text = "JOURNAL & INSIGHTS",
         face = Font:getFace("tfont", 20),
         bold = true,
     })
-    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+
+    -- Add spacer to push interactive content below top_safe_zone
+    local header_height = 28
+    local spacer_needed = top_safe_zone - Size.padding.large - header_height
+    if spacer_needed > 0 then
+        table.insert(content, VerticalSpan:new{ width = spacer_needed })
+    end
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     -- Weekly Review Section
     table.insert(content, TextWidget:new{
@@ -95,14 +105,13 @@ function Journal:showJournalView()
     })
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
-    local mood_data = self:getWeeklyMood()
-    for _, day in ipairs(mood_data) do
-        local bar_width = math.floor((day.score / 10) * 20)  -- Max 20 chars
-        local bar = string.rep("█", bar_width) .. string.rep("░", 20 - bar_width)
-        table.insert(content, TextWidget:new{
-            text = string.format("%s: %s %s", day.abbr, bar, day.energy or ""),
-            face = Font:getFace("cfont", 12),
-        })
+    local mood_data, energy_categories = self:getWeeklyMood()
+    -- Use line graph visualization - calculate character width from pixel width
+    -- Monospace font at size 11 is approximately 7 pixels per character
+    local char_width = math.floor(content_width / 7)
+    local graph_widgets = self:renderMoodLineGraph(mood_data, energy_categories, char_width)
+    for _, widget in ipairs(graph_widgets) do
+        table.insert(content, widget)
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
@@ -169,15 +178,37 @@ function Journal:showJournalView()
         },
     }
 
-    -- Wrap in InputContainer for gestures
+    -- Standard InputContainer
     self.journal_widget = InputContainer:new{
-        dimen = Geom:new{w = screen_width, h = screen_height},
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = screen_width,
+            h = screen_height,
+        },
         ges_events = {},
         main_layout,
     }
 
-    -- Tap anywhere in content area to show menu (leave top 10% for KOReader menu)
-    local top_safe_zone = math.floor(screen_height * 0.1)
+    -- Top zone tap handler - CLOSE plugin to access KOReader menu
+    local journal = self
+    self.journal_widget.ges_events.TopTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = 0,
+                y = 0,
+                w = screen_width,
+                h = top_safe_zone,
+            },
+        },
+    }
+    self.journal_widget.onTopTap = function()
+        UIManager:close(journal.journal_widget)
+        return true
+    end
+
+    -- Tap anywhere in content area (below top zone) to show menu
     self.journal_widget.ges_events.Tap = {
         GestureRange:new{
             ges = "tap",
@@ -194,7 +225,7 @@ function Journal:showJournalView()
         return true
     end
 
-    -- Swipe gestures (leave top 10% for KOReader menu)
+    -- Swipe gestures (leave top 1/8 for KOReader menu)
     self.journal_widget.ges_events.Swipe = {
         GestureRange:new{
             ges = "swipe",
@@ -312,7 +343,8 @@ function Journal:getWeeklyStats()
 end
 
 --[[--
-Get weekly mood data for bar chart.
+Get weekly mood data with all entries for line graph.
+Returns both daily summary and individual entries per day.
 --]]
 function Journal:getWeeklyMood()
     local logs = Data:loadDailyLogs()
@@ -321,7 +353,7 @@ function Journal:getWeeklyMood()
     local today = os.time()
     local day_abbrs = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 
-    -- Map energy levels to scores
+    -- Map energy levels to scores (first = highest)
     local energy_scores = {}
     local score_step = 10 / #energy_categories
     for i, cat in ipairs(energy_categories) do
@@ -340,14 +372,99 @@ function Journal:getWeeklyMood()
         local energy = day_data and day_data.energy_level
         local score = energy and energy_scores[energy] or 0
 
+        -- Get all mood entries for this day
+        local entries = day_data and day_data.energy_entries or {}
+        local entry_scores = {}
+        for _, entry in ipairs(entries) do
+            local entry_score = energy_scores[entry.energy] or 0
+            table.insert(entry_scores, {
+                hour = entry.hour,
+                score = entry_score,
+                energy = entry.energy,
+            })
+        end
+
         table.insert(mood_data, {
             abbr = day_abbr,
             energy = energy,
             score = score,
+            entries = entry_scores,  -- All entries for this day
         })
     end
 
-    return mood_data
+    return mood_data, energy_categories
+end
+
+--[[--
+Render a text-based line graph for weekly mood.
+@param mood_data table Weekly mood data from getWeeklyMood
+@param energy_categories table Energy level names
+@param width number Available width in characters
+@return table Array of TextWidgets for the graph
+--]]
+function Journal:renderMoodLineGraph(mood_data, energy_categories, width)
+    local widgets = {}
+    -- Use fixed 6-char columns for each day, Y-axis prefix is 4 chars "X | "
+    local col_width = math.max(6, math.floor((width - 4) / 7))
+
+    -- Build the graph rows (top to bottom = highest to lowest score)
+    local score_step = 10 / #energy_categories
+    for row = 1, #energy_categories do
+        local row_score = math.floor((#energy_categories - row + 1) * score_step)
+        local label = string.sub(energy_categories[row], 1, 1)  -- First letter
+        local line = label .. " | "
+
+        for _, day in ipairs(mood_data) do
+            local day_char = "."  -- Empty day marker
+            -- Check if this day has a score at this level
+            if #day.entries > 0 then
+                for _, entry in ipairs(day.entries) do
+                    if math.abs(entry.score - row_score) < score_step / 2 then
+                        day_char = "*"
+                        break
+                    end
+                end
+            elseif day.score > 0 and math.abs(day.score - row_score) < score_step / 2 then
+                day_char = "*"
+            end
+
+            -- Center marker: equal padding on both sides
+            local half = math.floor(col_width / 2)
+            line = line .. string.rep(" ", half - 1) .. day_char .. string.rep(" ", col_width - half)
+        end
+
+        table.insert(widgets, TextWidget:new{
+            text = line,
+            face = Font:getFace("cfont", 11),
+        })
+    end
+
+    -- Baseline: matches "X | " prefix then column separators
+    local baseline = "  +-"
+    for _ = 1, 7 do
+        baseline = baseline .. string.rep("-", col_width)
+    end
+    baseline = baseline .. "+"
+    table.insert(widgets, TextWidget:new{
+        text = baseline,
+        face = Font:getFace("cfont", 11),
+    })
+
+    -- Day labels: same prefix width, then centered labels
+    local day_labels = "    "  -- 4 spaces to match "X | "
+    for _, day in ipairs(mood_data) do
+        local abbr = day.abbr
+        local total_pad = col_width - #abbr
+        local left = math.floor(total_pad / 2)
+        local right = total_pad - left
+        day_labels = day_labels .. string.rep(" ", left) .. abbr .. string.rep(" ", right)
+    end
+    table.insert(widgets, TextWidget:new{
+        text = day_labels,
+        face = Font:getFace("cfont", 11),
+    })
+
+    return widgets
 end
 
 --[[--

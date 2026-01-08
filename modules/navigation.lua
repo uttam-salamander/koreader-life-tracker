@@ -18,6 +18,7 @@ local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
+local VerticalSpan = require("ui/widget/verticalspan")
 local Screen = Device.screen
 local _ = require("gettext")
 
@@ -176,30 +177,75 @@ Shows content with right-side tabs.
 function Navigation:createView(content, current_tab, on_tab_change, on_close)
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
+    -- Leave top 10% free for KOReader system gestures (menu, etc.)
+    local top_safe_zone = math.floor(screen_height * 0.1)
 
     -- Wrap content with tabs
     local wrapped = self:wrap(content, current_tab, on_tab_change)
 
-    -- Create full-screen container with gesture handling
-    local container = InputContainer:new{
-        dimen = Screen:getSize(),
-        ges_events = {
-            Swipe = {
-                GestureRange:new{
-                    ges = "swipe",
-                    range = Screen:getSize(),
-                },
-            },
-        },
+    -- Create container with gesture handling
+    -- Exclude top 10% for KOReader accessibility (menu, etc.)
+    -- Use VerticalGroup with spacer to push content below safe zone
+    local content_with_spacer = VerticalGroup:new{
+        align = "left",
+        -- Top spacer for KOReader menu access
+        VerticalSpan:new{ width = top_safe_zone },
+        -- Main content
         FrameContainer:new{
             width = screen_width,
-            height = screen_height,
+            height = screen_height - top_safe_zone,
             padding = 0,
             bordersize = 0,
             background = Blitbuffer.COLOR_WHITE,
             wrapped,
         },
     }
+
+    local container = InputContainer:new{
+        -- Dimen excludes top safe zone so taps there go to KOReader
+        dimen = Geom:new{
+            x = 0,
+            y = top_safe_zone,
+            w = screen_width,
+            h = screen_height - top_safe_zone,
+        },
+        ges_events = {
+            Swipe = {
+                GestureRange:new{
+                    ges = "swipe",
+                    range = Geom:new{
+                        x = 0,
+                        y = top_safe_zone,
+                        w = screen_width,
+                        h = screen_height - top_safe_zone,
+                    },
+                },
+            },
+            -- Capture taps only below safe zone
+            Tap = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = 0,
+                        y = top_safe_zone,
+                        w = screen_width,
+                        h = screen_height - top_safe_zone,
+                    },
+                },
+            },
+        },
+        content_with_spacer,
+    }
+
+    -- Tap handler - only handle taps below safe zone (let top area pass through)
+    function container:onTap(_, ges)
+        -- If tap is in safe zone, don't handle it (return false to propagate)
+        if ges.pos.y < top_safe_zone then
+            return false
+        end
+        -- Otherwise, let child widgets handle it
+        return false
+    end
 
     -- Swipe navigation
     function container:onSwipe(_, ges)

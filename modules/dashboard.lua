@@ -83,6 +83,7 @@ end
 
 --[[--
 Set today's energy level and refresh dashboard.
+Also adds a timestamped mood entry for intra-day tracking.
 --]]
 function Dashboard:setTodayEnergy(energy)
     local today = Data:getCurrentDate()
@@ -90,11 +91,15 @@ function Dashboard:setTodayEnergy(energy)
     self.user_settings.today_date = today
     Data:saveUserSettings(self.user_settings)
 
-    -- Log the day
+    -- Log the day (keeps current energy as display value)
     local existing_log = Data:getDayLog(today) or {}
     existing_log.energy_level = energy
     existing_log.date = today
     Data:logDay(today, existing_log)
+
+    -- Also add timestamped mood entry for detailed tracking
+    local current_hour = tonumber(os.date("%H"))
+    Data:addMoodEntry(today, current_hour, energy)
 
     -- Refresh dashboard
     if self.dashboard_widget then
@@ -111,22 +116,36 @@ function Dashboard:showDashboardView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- Track Y position for gesture handling
+    -- KOReader reserves top 1/8 (12.5%) for menu gesture
+    -- Title text can be in this zone (non-interactive), but gesture handlers must not be
+    local top_safe_zone = math.floor(screen_height / 8)
+
+    -- Track Y position for gesture handling (content starts at top with padding)
+    -- Note: top_safe_zone is only for gesture exclusion, not visual layout
     self.current_y = Size.padding.large
 
-    -- Main content group
+    -- Main content group - title can be in top zone (visual only, no gestures there)
     local content = VerticalGroup:new{ align = "left" }
 
-    -- ===== Greeting =====
+    -- ===== Greeting (in top zone - non-interactive) =====
     local greeting = self:getTimeBasedGreeting()
     table.insert(content, TextWidget:new{
         text = greeting,
         face = Font:getFace("tfont", 22),
         bold = true,
     })
-    self.current_y = self.current_y + 30
+
+    -- Add spacer to push interactive content below top_safe_zone
+    -- Greeting is ~30px, so we need (top_safe_zone - 30 - padding) more
+    local greeting_height = 30
+    local spacer_needed = top_safe_zone - Size.padding.large - greeting_height
+    if spacer_needed > 0 then
+        table.insert(content, VerticalSpan:new{ width = spacer_needed })
+    end
     table.insert(content, VerticalSpan:new{ width = Size.padding.default })
-    self.current_y = self.current_y + Size.padding.default
+
+    -- All interactive content starts here (below top_safe_zone)
+    self.current_y = top_safe_zone + Size.padding.default
 
     -- ===== Energy Level Tabs (visual only, taps handled separately) =====
     self.energy_tabs_y = self.current_y
@@ -188,6 +207,7 @@ function Dashboard:showDashboardView()
     if daily_section then
         table.insert(content, daily_section)
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+        self.current_y = self.current_y + Size.padding.default
     end
 
     -- Weekly Quests section
@@ -195,6 +215,7 @@ function Dashboard:showDashboardView()
     if weekly_section then
         table.insert(content, weekly_section)
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+        self.current_y = self.current_y + Size.padding.default
     end
 
     -- Monthly Quests section
@@ -202,6 +223,7 @@ function Dashboard:showDashboardView()
     if monthly_section then
         table.insert(content, monthly_section)
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+        self.current_y = self.current_y + Size.padding.default
     end
 
     -- ===== Separator =====
@@ -290,25 +312,49 @@ function Dashboard:showDashboardView()
         },
     }
 
-    -- Wrap in InputContainer for gestures (but allow KOReader top menu)
+    -- Standard InputContainer for gestures
     self.dashboard_widget = InputContainer:new{
-        dimen = Geom:new{w = screen_width, h = screen_height},
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = screen_width,
+            h = screen_height,
+        },
         ges_events = {},
         main_layout,
     }
 
-    -- Add energy tab tap handlers
+    -- Store top_safe_zone for gesture handlers
+    self.top_safe_zone = top_safe_zone
+
+    -- Add energy tab tap handlers (below top zone)
     self:setupEnergyTapHandlers()
 
-    -- Add quest tap handlers
+    -- Add quest tap handlers (below top zone)
     self:setupQuestTapHandlers()
 
-    -- Swipe right to close (but not from top area - leave for KOReader menu)
-    local top_safe_zone = math.floor(screen_height * 0.1)
+    -- Top zone tap handler - CLOSE plugin to access KOReader menu
+    local dashboard = self
+    self.dashboard_widget.ges_events.TopTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = 0,
+                y = 0,
+                w = screen_width,
+                h = top_safe_zone,
+            },
+        },
+    }
+    self.dashboard_widget.onTopTap = function()
+        UIManager:close(dashboard.dashboard_widget)
+        return true
+    end
+
     self.dashboard_widget.ges_events.Swipe = {
         GestureRange:new{
             ges = "swipe",
-            -- Only capture swipes in the lower 90% of screen
+            -- Only capture swipes below top 1/8 zone (leave for KOReader)
             range = Geom:new{
                 x = 0,
                 y = top_safe_zone,
@@ -419,6 +465,7 @@ end
 
 --[[--
 Build a quest section with header and quest items grouped by time slots.
+Tracks Y positions for gesture handling.
 --]]
 function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, quest_type, time_slots)
     if not quests or #quests == 0 then
@@ -433,13 +480,15 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
 
     local section = VerticalGroup:new{ align = "left" }
 
-    -- Section header
+    -- Section header (24px height)
     table.insert(section, TextWidget:new{
         text = string.format("%s (%d)", title, #filtered),
         face = Font:getFace("tfont", 16),
         bold = true,
     })
+    self.current_y = self.current_y + 24
     table.insert(section, VerticalSpan:new{ width = Size.padding.small })
+    self.current_y = self.current_y + Size.padding.small
 
     -- Group quests by time slot
     local quests_by_slot = {}
@@ -460,12 +509,13 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
     for _, slot in ipairs(time_slots) do
         local slot_quests = quests_by_slot[slot]
         if slot_quests and #slot_quests > 0 then
-            -- Time slot sub-header
+            -- Time slot sub-header (18px height)
             table.insert(section, TextWidget:new{
                 text = slot,
                 face = Font:getFace("cfont", 12),
                 fgcolor = Blitbuffer.gray(0.4),
             })
+            self.current_y = self.current_y + 18
 
             for _, quest in ipairs(slot_quests) do
                 if shown >= 8 then break end
@@ -491,6 +541,7 @@ end
 
 --[[--
 Build a quest section with header and quest items (simple, no time slot grouping).
+Tracks Y positions for gesture handling.
 --]]
 function Dashboard:buildQuestSection(title, quests, today_energy, quest_type)
     if not quests or #quests == 0 then
@@ -505,13 +556,15 @@ function Dashboard:buildQuestSection(title, quests, today_energy, quest_type)
 
     local section = VerticalGroup:new{ align = "left" }
 
-    -- Section header
+    -- Section header (24px height)
     table.insert(section, TextWidget:new{
         text = string.format("%s (%d)", title, #filtered),
         face = Font:getFace("tfont", 16),
         bold = true,
     })
+    self.current_y = self.current_y + 24
     table.insert(section, VerticalSpan:new{ width = Size.padding.small })
+    self.current_y = self.current_y + Size.padding.small
 
     -- Quest items (max 5 per section on dashboard)
     local shown = 0
@@ -527,6 +580,7 @@ end
 
 --[[--
 Build a single quest row for the dashboard with inline OK/Skip buttons.
+Tracks Y position for gesture handling.
 --]]
 function Dashboard:buildQuestRow(quest, quest_type)
     local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
@@ -582,8 +636,13 @@ function Dashboard:buildQuestRow(quest, quest_type)
         },
     }
 
+    -- Put buttons on LEFT for easier tapping, then title
     local row = HorizontalGroup:new{
         align = "center",
+        complete_button,
+        HorizontalSpan:new{ width = 2 },
+        skip_button,
+        HorizontalSpan:new{ width = Size.padding.small },
         FrameContainer:new{
             width = title_width,
             height = TOUCH_TARGET_HEIGHT,
@@ -592,10 +651,6 @@ function Dashboard:buildQuestRow(quest, quest_type)
             background = status_bg,
             title_widget,
         },
-        HorizontalSpan:new{ width = Size.padding.small },
-        complete_button,
-        HorizontalSpan:new{ width = 2 },
-        skip_button,
     }
 
     local quest_row = FrameContainer:new{
@@ -607,32 +662,49 @@ function Dashboard:buildQuestRow(quest, quest_type)
         row,
     }
 
-    -- Store quest info for tap handling
+    -- Store quest info with current Y position for tap handling
     table.insert(self.quest_touch_areas, {
         quest = quest,
         quest_type = quest_type,
+        y = self.current_y,  -- Track actual Y position
     })
+
+    -- Update Y tracker
+    self.current_y = self.current_y + TOUCH_TARGET_HEIGHT + 2
 
     return quest_row
 end
 
 --[[--
 Filter quests by energy level.
+Shows quests that require your current energy level OR LESS.
+High energy days show all quests.
 --]]
 function Dashboard:filterQuestsByEnergy(quests, energy_level)
     local filtered = {}
     local user_settings = self.user_settings
+    local categories = user_settings.energy_categories or {"Energetic", "Average", "Down"}
 
-    -- Get highest energy level
-    local highest_energy = user_settings.energy_categories and user_settings.energy_categories[1] or "Energetic"
-    local is_high_energy = (energy_level == highest_energy)
+    -- Build energy level index (lower index = higher energy)
+    local energy_index = {}
+    for i, cat in ipairs(categories) do
+        energy_index[cat] = i
+    end
+
+    local current_level = energy_index[energy_level] or 2  -- Default to middle
+    local is_high_energy = (current_level == 1)
 
     for _, quest in ipairs(quests) do
-        -- Show if: any energy, matches energy, or high energy day
+        local required_level = energy_index[quest.energy_required] or 0  -- 0 for "Any"
+
+        -- Show if:
+        -- 1. energy_required == "Any" or not set
+        -- 2. High energy day (show everything)
+        -- 3. Required energy level >= current (i.e., requires same or less energy)
         if quest.energy_required == "Any" or
-           quest.energy_required == energy_level or
+           not quest.energy_required or
            is_high_energy or
-           not quest.energy_required then
+           required_level >= current_level then
             table.insert(filtered, quest)
         end
     end
@@ -641,27 +713,25 @@ function Dashboard:filterQuestsByEnergy(quests, energy_level)
 end
 
 --[[--
-Setup tap handlers for quest items with separate OK/Skip button regions.
+Setup tap handlers for quest items.
+Uses single tap handler per row, determines action by X position.
 --]]
 function Dashboard:setupQuestTapHandlers()
-    -- Quest sections start at approximately Y = 150 (after greeting + energy tabs + separator + reminders)
-    local quest_y = self.quest_list_start_y or 150
     local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
-    local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
-    local quest_height = TOUCH_TARGET_HEIGHT + 2
 
     for idx, quest_info in ipairs(self.quest_touch_areas) do
-        local row_y = quest_y + (idx - 1) * quest_height
+        -- Use stored Y position for this specific row
+        local row_y = quest_info.y
 
-        -- Title area tap (opens details/edit menu)
-        local title_gesture = "QuestTitle_" .. idx
-        self.dashboard_widget.ges_events[title_gesture] = {
+        -- Single tap handler for entire row - determine action by X position
+        local row_gesture = "QuestRow_" .. idx
+        self.dashboard_widget.ges_events[row_gesture] = {
             GestureRange:new{
                 ges = "tap",
                 range = Geom:new{
                     x = Size.padding.large,
                     y = row_y,
-                    w = title_width,
+                    w = content_width,
                     h = TOUCH_TARGET_HEIGHT,
                 },
             },
@@ -670,44 +740,30 @@ function Dashboard:setupQuestTapHandlers()
         local dashboard = self
         local quest = quest_info.quest
         local quest_type = quest_info.quest_type
-        self.dashboard_widget["on" .. title_gesture] = function()
-            dashboard:showQuestActions(quest, quest_type)
-            return true
-        end
 
-        -- OK/Complete button tap
-        local complete_gesture = "QuestComplete_" .. idx
-        self.dashboard_widget.ges_events[complete_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large + title_width + Size.padding.small,
-                    y = row_y,
-                    w = BUTTON_WIDTH,
-                    h = TOUCH_TARGET_HEIGHT,
-                },
-            },
-        }
-        self.dashboard_widget["on" .. complete_gesture] = function()
-            dashboard:toggleQuestComplete(quest, quest_type)
-            return true
-        end
+        self.dashboard_widget["on" .. row_gesture] = function(_, _, ges)
+            local logger = require("logger")
 
-        -- Skip button tap
-        local skip_gesture = "QuestSkip_" .. idx
-        self.dashboard_widget.ges_events[skip_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large + title_width + Size.padding.small + BUTTON_WIDTH + 2,
-                    y = row_y,
-                    w = BUTTON_WIDTH,
-                    h = TOUCH_TARGET_HEIGHT,
-                },
-            },
-        }
-        self.dashboard_widget["on" .. skip_gesture] = function()
-            dashboard:skipQuest(quest, quest_type)
+            -- Buttons are on LEFT: OK (0-11%), Skip (11-22%), Title (22%+)
+            local tap_x = ges.pos.x - Size.padding.large  -- Relative to content start
+            local row_width = content_width
+            local tap_percent = tap_x / row_width
+
+            logger.info("Quest tap: x=", ges.pos.x, "relative=", tap_x, "percent=", tap_percent)
+
+            if tap_percent < 0.11 then
+                -- Leftmost ~11% = OK button (50px / ~462px)
+                logger.info("-> OK detected")
+                dashboard:toggleQuestComplete(quest, quest_type)
+            elseif tap_percent < 0.22 then
+                -- Next ~11% = Skip button
+                logger.info("-> SKIP detected")
+                dashboard:skipQuest(quest, quest_type)
+            else
+                -- Right 78% = Title area
+                logger.info("-> TITLE detected")
+                dashboard:showQuestActions(quest, quest_type)
+            end
             return true
         end
     end
@@ -729,16 +785,22 @@ function Dashboard:skipQuest(quest, quest_type)
 
     Data:saveAllQuests(all_quests)
 
-    UIManager:show(InfoMessage:new{
-        text = _("Quest skipped for today"),
-        timeout = 1,
-    })
-
     -- Refresh dashboard
     if self.dashboard_widget then
         UIManager:close(self.dashboard_widget)
     end
     self:showDashboardView()
+
+    -- Force immediate screen refresh
+    UIManager:setDirty("all", "ui")
+
+    -- Schedule feedback message for next tick
+    UIManager:nextTick(function()
+        UIManager:show(InfoMessage:new{
+            text = _("Quest skipped for today"),
+            timeout = 1,
+        })
+    end)
 end
 
 --[[--
@@ -781,12 +843,10 @@ end
 Toggle quest completion status.
 --]]
 function Dashboard:toggleQuestComplete(quest, quest_type)
+    local message
     if quest.completed then
         Data:uncompleteQuest(quest_type, quest.id)
-        UIManager:show(InfoMessage:new{
-            text = _("Quest marked incomplete"),
-            timeout = 1,
-        })
+        message = _("Quest marked incomplete")
     else
         -- Complete the quest
         local today = Data:getCurrentDate()
@@ -814,11 +874,7 @@ function Dashboard:toggleQuestComplete(quest, quest_type)
         Data:saveAllQuests(all_quests)
         Quests:updateDailyLog()
         Quests:updateGlobalStreak()
-
-        UIManager:show(InfoMessage:new{
-            text = _("Quest completed!"),
-            timeout = 1,
-        })
+        message = _("Quest completed!")
     end
 
     -- Refresh dashboard
@@ -826,6 +882,17 @@ function Dashboard:toggleQuestComplete(quest, quest_type)
         UIManager:close(self.dashboard_widget)
     end
     self:showDashboardView()
+
+    -- Force immediate screen refresh
+    UIManager:setDirty("all", "ui")
+
+    -- Schedule feedback message for next tick to ensure dashboard renders first
+    UIManager:nextTick(function()
+        UIManager:show(InfoMessage:new{
+            text = message,
+            timeout = 1,
+        })
+    end)
 end
 
 --[[--

@@ -60,11 +60,17 @@ function Quests:showQuestsView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- Track Y position for gesture handling
-    self.current_y = Size.padding.large  -- Start after top padding
+    -- Leave top 10% free for KOReader system gestures
+    local top_safe_zone = math.floor(screen_height * 0.1)
+
+    -- Track Y position for gesture handling (starts after top safe zone + padding)
+    self.current_y = top_safe_zone + Size.padding.large
 
     -- Main content
     local content = VerticalGroup:new{ align = "left" }
+
+    -- Top spacer for KOReader menu access
+    table.insert(content, VerticalSpan:new{ width = top_safe_zone })
 
     -- Header (approximately 30px height)
     table.insert(content, TextWidget:new{
@@ -174,15 +180,38 @@ function Quests:showQuestsView()
         },
     }
 
-    -- Wrap in InputContainer
+    -- Standard InputContainer
     self.quests_widget = InputContainer:new{
-        dimen = Geom:new{w = screen_width, h = screen_height},
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = screen_width,
+            h = screen_height,
+        },
         ges_events = {},
         main_layout,
     }
 
     -- Setup gesture handlers
     self:setupGestureHandlers(content_width)
+
+    -- Top zone tap handler - CLOSE plugin to access KOReader menu
+    local quests = self
+    self.quests_widget.ges_events.TopTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = 0,
+                y = 0,
+                w = screen_width,
+                h = top_safe_zone,
+            },
+        },
+    }
+    self.quests_widget.onTopTap = function()
+        UIManager:close(quests.quests_widget)
+        return true
+    end
 
     UIManager:show(self.quests_widget)
 end
@@ -295,8 +324,13 @@ function Quests:buildQuestRow(quest, content_width)
         },
     }
 
+    -- Put buttons on LEFT for easier tapping, then title
     local row = HorizontalGroup:new{
         align = "center",
+        complete_button,
+        HorizontalSpan:new{ width = 2 },
+        skip_button,
+        HorizontalSpan:new{ width = Size.padding.small },
         FrameContainer:new{
             width = title_width,
             height = QUEST_ROW_HEIGHT,
@@ -305,10 +339,6 @@ function Quests:buildQuestRow(quest, content_width)
             background = status_bg,
             title_widget,
         },
-        HorizontalSpan:new{ width = Size.padding.small },
-        complete_button,
-        HorizontalSpan:new{ width = 2 },
-        skip_button,
     }
 
     return FrameContainer:new{
@@ -356,36 +386,19 @@ function Quests:setupGestureHandlers(content_width)
     end
 
     -- Quest row taps - use tracked Y positions
+    -- Buttons are on LEFT: OK, Skip, then Title
     for idx, row_info in ipairs(self.quest_rows) do
         local row_y = row_info.y
         local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
-
-        -- Title area tap (opens menu)
-        local title_gesture = "QuestTitle_" .. idx
-        self.quests_widget.ges_events[title_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large,
-                    y = row_y,
-                    w = title_width,
-                    h = QUEST_ROW_HEIGHT,
-                },
-            },
-        }
         local quest = row_info.quest
-        self.quests_widget["on" .. title_gesture] = function()
-            quests_module:showQuestActions(quest)
-            return true
-        end
 
-        -- Complete button tap
+        -- Complete (OK) button tap - leftmost position
         local complete_gesture = "QuestComplete_" .. idx
         self.quests_widget.ges_events[complete_gesture] = {
             GestureRange:new{
                 ges = "tap",
                 range = Geom:new{
-                    x = Size.padding.large + title_width + Size.padding.small,
+                    x = Size.padding.large,
                     y = row_y,
                     w = BUTTON_WIDTH,
                     h = QUEST_ROW_HEIGHT,
@@ -397,13 +410,13 @@ function Quests:setupGestureHandlers(content_width)
             return true
         end
 
-        -- Skip button tap
+        -- Skip button tap - after OK button
         local skip_gesture = "QuestSkip_" .. idx
         self.quests_widget.ges_events[skip_gesture] = {
             GestureRange:new{
                 ges = "tap",
                 range = Geom:new{
-                    x = Size.padding.large + title_width + Size.padding.small + BUTTON_WIDTH + 2,
+                    x = Size.padding.large + BUTTON_WIDTH + 2,
                     y = row_y,
                     w = BUTTON_WIDTH,
                     h = QUEST_ROW_HEIGHT,
@@ -412,6 +425,24 @@ function Quests:setupGestureHandlers(content_width)
         }
         self.quests_widget["on" .. skip_gesture] = function()
             quests_module:skipQuest(quest)
+            return true
+        end
+
+        -- Title area tap (opens menu) - after both buttons
+        local title_gesture = "QuestTitle_" .. idx
+        self.quests_widget.ges_events[title_gesture] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large + BUTTON_WIDTH * 2 + Size.padding.small + 2,
+                    y = row_y,
+                    w = title_width,
+                    h = QUEST_ROW_HEIGHT,
+                },
+            },
+        }
+        self.quests_widget["on" .. title_gesture] = function()
+            quests_module:showQuestActions(quest)
             return true
         end
     end
@@ -604,6 +635,7 @@ function Quests:toggleQuestComplete(quest)
     -- Refresh
     UIManager:close(self.quests_widget)
     self:showQuestsView()
+    UIManager:setDirty("all", "ui")
 end
 
 --[[--
@@ -629,6 +661,7 @@ function Quests:skipQuest(quest)
     -- Refresh
     UIManager:close(self.quests_widget)
     self:showQuestsView()
+    UIManager:setDirty("all", "ui")
 end
 
 --[[--

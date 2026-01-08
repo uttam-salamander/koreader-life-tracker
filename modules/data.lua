@@ -214,6 +214,46 @@ function Data:getLogsForRange(start_date, end_date)
     return result
 end
 
+--[[--
+Add a mood/energy entry for a specific date and hour.
+Allows multiple mood entries per day for intra-day tracking.
+@param date string Date in YYYY-MM-DD format
+@param hour number Hour of day (0-23)
+@param energy string Energy level name
+--]]
+function Data:addMoodEntry(date, hour, energy)
+    local logs = self:loadDailyLogs()
+    local entry = logs[date] or {}
+
+    -- Initialize energy_entries array if needed
+    if not entry.energy_entries then
+        entry.energy_entries = {}
+    end
+
+    -- Add new entry with hour and energy
+    table.insert(entry.energy_entries, {
+        hour = hour,
+        energy = energy,
+    })
+
+    logs[date] = entry
+    self:saveDailyLogs(logs)
+end
+
+--[[--
+Get all mood entries for a specific date.
+@param date string Date in YYYY-MM-DD format
+@return table Array of {hour, energy} entries or empty table
+--]]
+function Data:getMoodEntries(date)
+    local logs = self:loadDailyLogs()
+    local entry = logs[date]
+    if entry and entry.energy_entries then
+        return entry.energy_entries
+    end
+    return {}
+end
+
 -- ============================================
 -- Reminder Operations
 -- ============================================

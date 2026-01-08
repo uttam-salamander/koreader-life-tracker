@@ -57,23 +57,31 @@ function Reminders:showRemindersView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    local reminders = Data:loadReminders()
+    -- KOReader reserves top 1/8 (12.5%) for menu gesture
+    local top_safe_zone = math.floor(screen_height / 8)
 
-    -- Track Y position for gesture handling
-    self.current_y = Size.padding.large
+    local reminders = Data:loadReminders()
 
     -- Main content
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Header
+    -- Header (in top zone - non-interactive)
     table.insert(content, TextWidget:new{
         text = _("Reminders"),
         face = Font:getFace("tfont", 22),
         bold = true,
     })
-    self.current_y = self.current_y + 30
+
+    -- Add spacer to push interactive content below top_safe_zone
+    local header_height = 30
+    local spacer_needed = top_safe_zone - Size.padding.large - header_height
+    if spacer_needed > 0 then
+        table.insert(content, VerticalSpan:new{ width = spacer_needed })
+    end
     table.insert(content, VerticalSpan:new{ width = Size.padding.default })
-    self.current_y = self.current_y + Size.padding.default
+
+    -- All interactive content starts here (below top_safe_zone)
+    self.current_y = top_safe_zone + Size.padding.default
 
     -- Upcoming Today section
     local upcoming = self:getUpcomingToday(reminders)
@@ -211,15 +219,41 @@ function Reminders:showRemindersView()
         },
     }
 
-    -- Wrap in InputContainer
+    -- Standard InputContainer
     self.reminders_widget = InputContainer:new{
-        dimen = Geom:new{w = screen_width, h = screen_height},
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = screen_width,
+            h = screen_height,
+        },
         ges_events = {},
         main_layout,
     }
 
-    -- Setup gesture handlers
+    -- Store top_safe_zone for gesture handlers
+    self.top_safe_zone = top_safe_zone
+
+    -- Setup gesture handlers (below top zone)
     self:setupGestureHandlers(content_width)
+
+    -- Top zone tap handler - CLOSE plugin to access KOReader menu
+    local reminders = self
+    self.reminders_widget.ges_events.TopTap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = 0,
+                y = 0,
+                w = screen_width,
+                h = top_safe_zone,
+            },
+        },
+    }
+    self.reminders_widget.onTopTap = function()
+        UIManager:close(reminders.reminders_widget)
+        return true
+    end
 
     UIManager:show(self.reminders_widget)
 end
@@ -593,7 +627,7 @@ function Reminders:showTimeInput(title)
                     local time = dialog:getInputText()
                     UIManager:close(dialog)
                     if time and time:match("^%d%d?:%d%d$") then
-                        self:showRepeatDays(title, time)
+                        self:showDateSelection(title, time)
                     else
                         UIManager:show(InfoMessage:new{
                             text = _("Please enter time in HH:MM format"),
@@ -608,9 +642,98 @@ function Reminders:showTimeInput(title)
 end
 
 --[[--
-Step 3: Select repeat days.
+Step 3: Select date for reminder.
 --]]
-function Reminders:showRepeatDays(title, time)
+function Reminders:showDateSelection(title, time)
+    local today = os.date("%Y-%m-%d")
+    local tomorrow = os.date("%Y-%m-%d", os.time() + 86400)
+    local next_week = os.date("%Y-%m-%d", os.time() + 7 * 86400)
+
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("When should this reminder start?"),
+        buttons = {
+            {{
+                text = string.format(_("Today (%s)"), today),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showRepeatDays(title, time, today)
+                end,
+            }},
+            {{
+                text = string.format(_("Tomorrow (%s)"), tomorrow),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showRepeatDays(title, time, tomorrow)
+                end,
+            }},
+            {{
+                text = string.format(_("Next Week (%s)"), next_week),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showRepeatDays(title, time, next_week)
+                end,
+            }},
+            {{
+                text = _("Custom Date..."),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showCustomDateInput(title, time)
+                end,
+            }},
+            {{
+                text = _("Back"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showTimeInput(title)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
+Custom date input.
+--]]
+function Reminders:showCustomDateInput(title, time)
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Enter Date"),
+        input_hint = _("YYYY-MM-DD"),
+        input = os.date("%Y-%m-%d"),
+        buttons = {{
+            {
+                text = _("Back"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showDateSelection(title, time)
+                end,
+            },
+            {
+                text = _("Next"),
+                callback = function()
+                    local date = dialog:getInputText()
+                    UIManager:close(dialog)
+                    if date and date:match("^%d%d%d%d%-%d%d%-%d%d$") then
+                        self:showRepeatDays(title, time, date)
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter date in YYYY-MM-DD format"),
+                        })
+                    end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
+Step 4: Select repeat days.
+--]]
+function Reminders:showRepeatDays(title, time, start_date)
     local dialog
     dialog = ButtonDialog:new{
         title = _("Repeat"),
@@ -619,41 +742,42 @@ function Reminders:showRepeatDays(title, time)
                 text = _("Daily"),
                 callback = function()
                     UIManager:close(dialog)
-                    self:createReminder(title, time, {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"})
+                    self:createReminder(title, time, {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}, start_date)
                 end,
             }},
             {{
                 text = _("Weekdays (Mon-Fri)"),
                 callback = function()
                     UIManager:close(dialog)
-                    self:createReminder(title, time, {"Mon", "Tue", "Wed", "Thu", "Fri"})
+                    self:createReminder(title, time, {"Mon", "Tue", "Wed", "Thu", "Fri"}, start_date)
                 end,
             }},
             {{
                 text = _("Weekends (Sat-Sun)"),
                 callback = function()
                     UIManager:close(dialog)
-                    self:createReminder(title, time, {"Sat", "Sun"})
+                    self:createReminder(title, time, {"Sat", "Sun"}, start_date)
                 end,
             }},
             {{
                 text = _("Once (no repeat)"),
                 callback = function()
                     UIManager:close(dialog)
-                    self:createReminder(title, time, {})
+                    self:createReminder(title, time, {}, start_date)
                 end,
             }},
             {{
                 text = _("Custom Days..."),
                 callback = function()
                     UIManager:close(dialog)
-                    self:showCustomDays(title, time)
+                    self:showCustomDays(title, time, start_date)
                 end,
             }},
             {{
-                text = _("Cancel"),
+                text = _("Back"),
                 callback = function()
                     UIManager:close(dialog)
+                    self:showDateSelection(title, time)
                 end,
             }},
         },
@@ -664,12 +788,13 @@ end
 --[[--
 Show custom day selection.
 --]]
-function Reminders:showCustomDays(title, time)
+function Reminders:showCustomDays(title, time, start_date)
     self.selected_days = {}
-    self:showCustomDaysWithSelection(title, time)
+    self.temp_start_date = start_date
+    self:showCustomDaysWithSelection(title, time, start_date)
 end
 
-function Reminders:showCustomDaysWithSelection(title, time)
+function Reminders:showCustomDaysWithSelection(title, time, start_date)
     local buttons = {}
 
     for i, day in ipairs(DAY_FULL) do
@@ -684,7 +809,7 @@ function Reminders:showCustomDaysWithSelection(title, time)
                     self.selected_days[abbr] = true
                 end
                 UIManager:close(self.custom_dialog)
-                self:showCustomDaysWithSelection(title, time)
+                self:showCustomDaysWithSelection(title, time, start_date)
             end,
         }})
     end
@@ -699,7 +824,7 @@ function Reminders:showCustomDaysWithSelection(title, time)
                     table.insert(days, abbr)
                 end
             end
-            self:createReminder(title, time, days)
+            self:createReminder(title, time, days, start_date)
         end,
     }})
 
@@ -713,11 +838,12 @@ end
 --[[--
 Create the reminder and save.
 --]]
-function Reminders:createReminder(title, time, repeat_days)
+function Reminders:createReminder(title, time, repeat_days, start_date)
     Data:addReminder({
         title = title,
         time = time,
         repeat_days = repeat_days,
+        start_date = start_date,
         active = true,
     })
 
