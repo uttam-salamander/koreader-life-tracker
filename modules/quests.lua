@@ -349,6 +349,14 @@ function Quests:updateDailyLog()
     local quests = Data:loadAllQuests()
     local logs = Data:loadDailyLogs()
 
+    -- Guard against nil data (corrupted files)
+    if not quests then
+        return  -- Can't update log without quest data
+    end
+    if not logs then
+        logs = {}  -- Start fresh if logs are corrupted
+    end
+
     -- Count today's quests
     local total = 0
     local completed = 0
@@ -582,8 +590,24 @@ Get quests filtered by energy level for today.
 --]]
 function Quests:getFilteredQuestsForToday(energy_level)
     local quests = Data:loadAllQuests()
+    if not quests then
+        return {}  -- No quests data available
+    end
+
     local user_settings = Data:loadUserSettings()
     local filtered = {}
+
+    -- If energy level not set (first-time user), show all quests
+    if not energy_level then
+        for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+            for _, quest in ipairs(quests[quest_type] or {}) do
+                if not quest.completed then
+                    table.insert(filtered, quest)
+                end
+            end
+        end
+        return filtered
+    end
 
     -- Get highest energy level from settings (first in list)
     -- When at highest energy, user sees ALL quests regardless of requirement

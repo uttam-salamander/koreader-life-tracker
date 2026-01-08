@@ -19,18 +19,19 @@ local _ = require("gettext")
 
 local Navigation = {}
 
--- Tab definitions with short labels and full names
+-- Tab definitions with vertical labels (diary-style rotated text)
+-- Labels are displayed vertically, one character per line
 Navigation.TABS = {
-    {id = "dashboard", label = "Dash", full = _("Dashboard")},
-    {id = "quests",    label = "Quest", full = _("Quests")},
-    {id = "timeline",  label = "Time", full = _("Timeline")},
-    {id = "reminders", label = "Rem", full = _("Reminders")},
-    {id = "journal",   label = "Jrnl", full = _("Journal")},
+    {id = "dashboard", label = "DASH", full = _("Dashboard")},
+    {id = "quests",    label = "QUEST", full = _("Quests")},
+    {id = "timeline",  label = "TIME", full = _("Timeline")},
+    {id = "reminders", label = "REM", full = _("Reminders")},
+    {id = "journal",   label = "JRNL", full = _("Journal")},
 }
 
--- Tab width for the right sidebar (larger for e-ink touch targets)
--- 60px is approximately 10mm on typical e-ink displays, minimum for reliable touch
-Navigation.TAB_WIDTH = 60
+-- Tab width for the right sidebar (narrower with vertical text)
+-- 35px is enough for single characters, like diary month tabs
+Navigation.TAB_WIDTH = 35
 
 --[[--
 Create a wrapped content view with right-side tab navigation.
@@ -87,15 +88,20 @@ function Navigation:buildTabColumn(current_tab, height)
         -- Inactive: white bg with black text and border
         local bg_color = is_active and 0x000000 or 0xFFFFFF
         local fg_color = is_active and 0xFFFFFF or 0x000000
-        local border_size = is_active and 0 or 2
+        local border_size = is_active and 0 or 1
 
-        -- Create tab label (larger font for e-ink readability)
-        local label = TextWidget:new{
-            text = tab.label,
-            face = Font:getFace("tfont", 14),  -- Larger for e-ink
-            fgcolor = fg_color,
-            bold = is_active,
-        }
+        -- Create vertical text label (diary-style rotated text)
+        -- Each character is displayed on its own line
+        local vertical_label = VerticalGroup:new{ align = "center" }
+        for i = 1, #tab.label do
+            local char = tab.label:sub(i, i)
+            table.insert(vertical_label, TextWidget:new{
+                text = char,
+                face = Font:getFace("tfont", 12),
+                fgcolor = fg_color,
+                bold = is_active,
+            })
+        end
 
         -- Wrap in container
         local tab_frame = FrameContainer:new{
@@ -106,7 +112,7 @@ function Navigation:buildTabColumn(current_tab, height)
             background = bg_color,
             CenterContainer:new{
                 dimen = {w = self.TAB_WIDTH - Size.padding.small * 2, h = tab_height - Size.padding.small * 2},
-                label,
+                vertical_label,
             },
         }
 
@@ -125,10 +131,12 @@ function Navigation:buildTabColumn(current_tab, height)
         }
 
         -- Store tab ID for callback
+        -- Capture Navigation module in closure to avoid self reference issues
+        local nav = self
         tab_button.tab_id = tab.id
         tab_button.onTap = function()
-            if self.on_tab_change and tab.id ~= current_tab then
-                self.on_tab_change(tab.id)
+            if nav.on_tab_change and tab.id ~= current_tab then
+                nav.on_tab_change(tab.id)
             end
             return true
         end
