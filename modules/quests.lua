@@ -1,240 +1,473 @@
 --[[--
 Quests module for Life Tracker.
-Manages quest CRUD, list views, and completion with cross-off gesture.
+Manages quest CRUD, list views, and completion with inline buttons.
 
 @module lifetracker.quests
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
-local InputDialog = require("ui/widget/inputdialog")
+local CenterContainer = require("ui/widget/container/centercontainer")
+local Device = require("device")
+local Font = require("ui/font")
+local FrameContainer = require("ui/widget/container/framecontainer")
+local Geom = require("ui/geometry")
+local GestureRange = require("ui/gesturerange")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan = require("ui/widget/horizontalspan")
 local InfoMessage = require("ui/widget/infomessage")
-local Menu = require("ui/widget/menu")
+local InputContainer = require("ui/widget/container/inputcontainer")
+local InputDialog = require("ui/widget/inputdialog")
+local LineWidget = require("ui/widget/linewidget")
+local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
+local Size = require("ui/size")
+local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
+local VerticalGroup = require("ui/widget/verticalgroup")
+local VerticalSpan = require("ui/widget/verticalspan")
+local Screen = Device.screen
 local _ = require("gettext")
 
 local Data = require("modules/data")
+local Navigation = require("modules/navigation")
 
 local Quests = {}
 
+-- UI Constants
+local QUEST_ROW_HEIGHT = 50
+local BUTTON_WIDTH = 50
+local TYPE_TAB_HEIGHT = 40
+local TYPE_TAB_WIDTH = 80
+
 -- Current view state
-Quests.current_type = "daily"  -- daily, weekly, monthly
+Quests.current_type = "daily"
 
 --[[--
-Show the quests menu with type tabs.
+Show the quests view.
 @tparam table ui The UI manager reference
 --]]
 function Quests:show(ui)
     self.ui = ui
-    self:showQuestList()
+    self:showQuestsView()
 end
 
 --[[--
-Show quest list for current type.
+Build the quests view with proper navigation.
 --]]
-function Quests:showQuestList()
+function Quests:showQuestsView()
+    local screen_width = Screen:getWidth()
+    local screen_height = Screen:getHeight()
+    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+
+    -- Track Y position for gesture handling
+    self.current_y = Size.padding.large  -- Start after top padding
+
+    -- Main content
+    local content = VerticalGroup:new{ align = "left" }
+
+    -- Header (approximately 30px height)
+    table.insert(content, TextWidget:new{
+        text = _("Quests"),
+        face = Font:getFace("tfont", 22),
+        bold = true,
+    })
+    self.current_y = self.current_y + 30
+    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+    self.current_y = self.current_y + Size.padding.default
+
+    -- Type tabs (Daily / Weekly / Monthly) - inline, no dialog
+    self.type_tabs_y = self.current_y
+    local type_tabs = self:buildTypeTabs()
+    table.insert(content, type_tabs)
+    self.current_y = self.current_y + TYPE_TAB_HEIGHT
+    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+    self.current_y = self.current_y + Size.padding.default
+
+    -- Separator
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{ w = content_width, h = Size.line.thick },
+        background = Blitbuffer.COLOR_BLACK,
+    })
+    self.current_y = self.current_y + Size.line.thick
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    self.current_y = self.current_y + Size.padding.small
+
+    -- Quest list starting position
+    self.quest_list_start_y = self.current_y
+
+    -- Quest list
+    self.quest_rows = {}
     local quests = Data:loadAllQuests()
-    local user_settings = Data:loadUserSettings()
     local quest_list = quests[self.current_type] or {}
 
-    local items = {}
-
-    -- Type selector tabs
-    table.insert(items, {
-        text = self:getTypeTabsText(),
-        callback = function()
-            self:showTypeSelector()
-        end,
-    })
-
-    -- Separator
-    table.insert(items, {
-        text = "─────────────────────────────",
-        enabled = false,
-    })
-
-    -- Quest items
     if #quest_list == 0 then
-        table.insert(items, {
-            text = _("No quests yet. Add one!"),
-            enabled = false,
+        table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+        self.current_y = self.current_y + Size.padding.large
+        table.insert(content, TextWidget:new{
+            text = _("No quests yet. Add one below!"),
+            face = Font:getFace("cfont", 16),
+            fgcolor = Blitbuffer.gray(0.5),
         })
+        self.current_y = self.current_y + 20
     else
-        for _, quest in ipairs(quest_list) do
-            local status_icon = quest.completed and "✓" or "○"
-            local time_slot_abbr = self:getTimeSlotAbbr(quest.time_slot, user_settings.time_slots)
-            local energy_abbr = self:getEnergyAbbr(quest.energy_required)
-
-            -- Format: ○ Quest title [M] [Avg]
-            local display_text = string.format("%s %s [%s] [%s]",
-                status_icon,
-                quest.title,
-                time_slot_abbr,
-                energy_abbr
-            )
-
-            -- Add streak info if > 0
-            local mandatory_text = ""
-            if quest.streak and quest.streak > 0 then
-                mandatory_text = string.format("🔥 %d", quest.streak)
-            end
-
-            table.insert(items, {
-                text = display_text,
-                mandatory = mandatory_text,
-                quest = quest,
-                callback = function()
-                    self:showQuestActions(quest)
-                end,
-                hold_callback = function()
-                    self:showQuestActions(quest)
-                end,
-            })
+        for idx, quest in ipairs(quest_list) do
+            local quest_row = self:buildQuestRow(quest, content_width)
+            table.insert(content, quest_row)
+            table.insert(self.quest_rows, {quest = quest, idx = idx, y = self.current_y})
+            self.current_y = self.current_y + QUEST_ROW_HEIGHT + 2
         end
     end
 
-    -- Separator
-    table.insert(items, {
-        text = "─────────────────────────────",
-        enabled = false,
-    })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+    self.current_y = self.current_y + Size.padding.large
 
-    -- Add new quest button
-    table.insert(items, {
-        text = _("[+] Add New Quest"),
-        callback = function()
-            self:showAddQuestDialog()
-        end,
-    })
-
-    -- Legend
-    table.insert(items, {
-        text = _("Legend: ○=pending ✓=done"),
-        enabled = false,
-    })
-
-    local menu
-    menu = Menu:new{
-        title = string.format(_("Quests - %s"), self:getTypeDisplayName()),
-        item_table = items,
-        close_callback = function()
-            UIManager:close(menu)
-        end,
-    }
-    self.menu = menu
-    UIManager:show(menu)
-end
-
---[[--
-Get abbreviated time slot name.
---]]
-function Quests:getTimeSlotAbbr(slot, _time_slots)
-    if not slot then return "?" end
-    -- Return first letter of each word
-    local abbr = ""
-    for word in slot:gmatch("%S+") do
-        abbr = abbr .. word:sub(1, 1):upper()
-    end
-    return abbr ~= "" and abbr or slot:sub(1, 1):upper()
-end
-
---[[--
-Get abbreviated energy level.
---]]
-function Quests:getEnergyAbbr(energy)
-    if not energy then return "Any" end
-    if energy == "Any" or energy == "" then return "Any" end
-    return energy:sub(1, 3)
-end
-
---[[--
-Get display text for type tabs.
---]]
-function Quests:getTypeTabsText()
-    local types = {"daily", "weekly", "monthly"}
-    local parts = {}
-    for _, t in ipairs(types) do
-        if t == self.current_type then
-            table.insert(parts, "[" .. t:upper() .. "]")
-        else
-            table.insert(parts, t)
-        end
-    end
-    return table.concat(parts, "  ")
-end
-
---[[--
-Get display name for current type.
---]]
-function Quests:getTypeDisplayName()
-    local names = {
-        daily = _("Daily"),
-        weekly = _("Weekly"),
-        monthly = _("Monthly"),
-    }
-    return names[self.current_type] or self.current_type
-end
-
---[[--
-Show type selector dialog.
---]]
-function Quests:showTypeSelector()
-    local dialog
-    dialog = ButtonDialog:new{
-        title = _("Quest Type"),
-        buttons = {
-            {{
-                text = _("Daily"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self.current_type = "daily"
-                    if self.menu then UIManager:close(self.menu) end
-                    self:showQuestList()
-                end,
-            }},
-            {{
-                text = _("Weekly"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self.current_type = "weekly"
-                    if self.menu then UIManager:close(self.menu) end
-                    self:showQuestList()
-                end,
-            }},
-            {{
-                text = _("Monthly"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self.current_type = "monthly"
-                    if self.menu then UIManager:close(self.menu) end
-                    self:showQuestList()
-                end,
-            }},
-            {{
-                text = _("Cancel"),
-                callback = function()
-                    UIManager:close(dialog)
-                end,
-            }},
+    -- Add quest button - store its Y position
+    self.add_button_y = self.current_y
+    local add_button = FrameContainer:new{
+        width = content_width,
+        height = QUEST_ROW_HEIGHT,
+        padding = Size.padding.small,
+        bordersize = 2,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = QUEST_ROW_HEIGHT - Size.padding.small * 2},
+            TextWidget:new{
+                text = _("[+] Add New Quest"),
+                face = Font:getFace("cfont", 16),
+                bold = true,
+            },
         },
     }
-    UIManager:show(dialog)
+    table.insert(content, add_button)
+
+    -- Wrap content
+    local padded_content = FrameContainer:new{
+        width = screen_width - Navigation.TAB_WIDTH,
+        height = screen_height,
+        padding = Size.padding.large,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        content,
+    }
+
+    -- Navigation setup
+    local quests_module = self
+    local ui = self.ui
+
+    local function on_tab_change(tab_id)
+        UIManager:close(quests_module.quests_widget)
+        Navigation:navigateTo(tab_id, ui)
+    end
+
+    -- Build navigation tabs
+    local tabs = Navigation:buildTabColumn("quests", screen_height)
+    Navigation.on_tab_change = on_tab_change
+
+    -- Create main layout
+    local main_layout = OverlapGroup:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        padded_content,
+        RightContainer:new{
+            dimen = Geom:new{w = screen_width, h = screen_height},
+            tabs,
+        },
+    }
+
+    -- Wrap in InputContainer
+    self.quests_widget = InputContainer:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        ges_events = {},
+        main_layout,
+    }
+
+    -- Setup gesture handlers
+    self:setupGestureHandlers(content_width)
+
+    UIManager:show(self.quests_widget)
 end
 
 --[[--
-Show actions for a quest (complete, edit, delete).
+Build type tabs (Daily / Weekly / Monthly).
+--]]
+function Quests:buildTypeTabs()
+    local types = {
+        {id = "daily", label = "Daily"},
+        {id = "weekly", label = "Weekly"},
+        {id = "monthly", label = "Monthly"},
+    }
+
+    local tabs = HorizontalGroup:new{ align = "center" }
+    self.type_tab_positions = {}
+    local x_offset = 0
+
+    for idx, type_info in ipairs(types) do
+        local is_active = (type_info.id == self.current_type)
+        local bg_color = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+        local fg_color = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+
+        local tab = FrameContainer:new{
+            width = TYPE_TAB_WIDTH,
+            height = TYPE_TAB_HEIGHT,
+            padding = Size.padding.small,
+            bordersize = is_active and 2 or 1,
+            background = bg_color,
+            CenterContainer:new{
+                dimen = Geom:new{w = TYPE_TAB_WIDTH - Size.padding.small * 2, h = TYPE_TAB_HEIGHT - Size.padding.small * 2},
+                TextWidget:new{
+                    text = type_info.label,
+                    face = Font:getFace("cfont", 14),
+                    fgcolor = fg_color,
+                    bold = is_active,
+                },
+            },
+        }
+
+        self.type_tab_positions[idx] = {
+            x = x_offset + Size.padding.large,
+            w = TYPE_TAB_WIDTH,
+            type_id = type_info.id,
+        }
+        x_offset = x_offset + TYPE_TAB_WIDTH + 4
+
+        table.insert(tabs, tab)
+        if idx < #types then
+            table.insert(tabs, HorizontalSpan:new{ width = 4 })
+        end
+    end
+
+    return tabs
+end
+
+--[[--
+Build a single quest row with inline buttons.
+--]]
+function Quests:buildQuestRow(quest, content_width)
+    local status_bg = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE
+    local text_color = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
+
+    -- Title area (tappable for details/edit)
+    local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
+
+    local title_text = quest.title
+    if quest.time_slot then
+        title_text = string.format("[%s] %s", quest.time_slot:sub(1,1), quest.title)
+    end
+
+    local title_widget = TextWidget:new{
+        text = title_text,
+        face = Font:getFace("cfont", 14),
+        fgcolor = text_color,
+        max_width = title_width - Size.padding.small * 2,
+    }
+
+    -- Complete button (checkmark)
+    local complete_text = quest.completed and "X" or "OK"
+    local complete_button = FrameContainer:new{
+        width = BUTTON_WIDTH,
+        height = QUEST_ROW_HEIGHT - 4,
+        padding = 2,
+        bordersize = 1,
+        background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+            TextWidget:new{
+                text = complete_text,
+                face = Font:getFace("cfont", 12),
+                bold = true,
+            },
+        },
+    }
+
+    -- Skip button
+    local skip_button = FrameContainer:new{
+        width = BUTTON_WIDTH,
+        height = QUEST_ROW_HEIGHT - 4,
+        padding = 2,
+        bordersize = 1,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+            TextWidget:new{
+                text = "Skip",
+                face = Font:getFace("cfont", 10),
+            },
+        },
+    }
+
+    local row = HorizontalGroup:new{
+        align = "center",
+        FrameContainer:new{
+            width = title_width,
+            height = QUEST_ROW_HEIGHT,
+            padding = Size.padding.small,
+            bordersize = 0,
+            background = status_bg,
+            title_widget,
+        },
+        HorizontalSpan:new{ width = Size.padding.small },
+        complete_button,
+        HorizontalSpan:new{ width = 2 },
+        skip_button,
+    }
+
+    return FrameContainer:new{
+        width = content_width,
+        height = QUEST_ROW_HEIGHT,
+        padding = 0,
+        bordersize = 1,
+        background = status_bg,
+        row,
+    }
+end
+
+--[[--
+Setup gesture handlers for quests view.
+--]]
+function Quests:setupGestureHandlers(content_width)
+    local screen_height = Screen:getHeight()
+    local screen_width = Screen:getWidth()
+    local quests_module = self
+
+    -- Type tab taps - use tracked position
+    local type_y = self.type_tabs_y
+    for idx, pos in ipairs(self.type_tab_positions) do
+        local gesture_name = "TypeTab_" .. idx
+        self.quests_widget.ges_events[gesture_name] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = pos.x,
+                    y = type_y,
+                    w = pos.w,
+                    h = TYPE_TAB_HEIGHT,
+                },
+            },
+        }
+        local type_id = pos.type_id
+        self.quests_widget["on" .. gesture_name] = function()
+            if type_id ~= quests_module.current_type then
+                quests_module.current_type = type_id
+                UIManager:close(quests_module.quests_widget)
+                quests_module:showQuestsView()
+            end
+            return true
+        end
+    end
+
+    -- Quest row taps - use tracked Y positions
+    for idx, row_info in ipairs(self.quest_rows) do
+        local row_y = row_info.y
+        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
+
+        -- Title area tap (opens menu)
+        local title_gesture = "QuestTitle_" .. idx
+        self.quests_widget.ges_events[title_gesture] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large,
+                    y = row_y,
+                    w = title_width,
+                    h = QUEST_ROW_HEIGHT,
+                },
+            },
+        }
+        local quest = row_info.quest
+        self.quests_widget["on" .. title_gesture] = function()
+            quests_module:showQuestActions(quest)
+            return true
+        end
+
+        -- Complete button tap
+        local complete_gesture = "QuestComplete_" .. idx
+        self.quests_widget.ges_events[complete_gesture] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large + title_width + Size.padding.small,
+                    y = row_y,
+                    w = BUTTON_WIDTH,
+                    h = QUEST_ROW_HEIGHT,
+                },
+            },
+        }
+        self.quests_widget["on" .. complete_gesture] = function()
+            quests_module:toggleQuestComplete(quest)
+            return true
+        end
+
+        -- Skip button tap
+        local skip_gesture = "QuestSkip_" .. idx
+        self.quests_widget.ges_events[skip_gesture] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large + title_width + Size.padding.small + BUTTON_WIDTH + 2,
+                    y = row_y,
+                    w = BUTTON_WIDTH,
+                    h = QUEST_ROW_HEIGHT,
+                },
+            },
+        }
+        self.quests_widget["on" .. skip_gesture] = function()
+            quests_module:skipQuest(quest)
+            return true
+        end
+    end
+
+    -- Add button tap - use tracked position
+    self.quests_widget.ges_events.AddQuest = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = Size.padding.large,
+                y = self.add_button_y,
+                w = content_width,
+                h = QUEST_ROW_HEIGHT,
+            },
+        },
+    }
+    self.quests_widget.onAddQuest = function()
+        quests_module:showAddQuestDialog()
+        return true
+    end
+
+    -- Swipe to close (leave top 10% for KOReader menu)
+    local top_safe_zone = math.floor(screen_height * 0.1)
+    self.quests_widget.ges_events.Swipe = {
+        GestureRange:new{
+            ges = "swipe",
+            range = Geom:new{
+                x = 0,
+                y = top_safe_zone,
+                w = screen_width - Navigation.TAB_WIDTH,
+                h = screen_height - top_safe_zone,
+            },
+        },
+    }
+    self.quests_widget.onSwipe = function(_, _, ges)
+        if ges.direction == "east" then
+            UIManager:close(quests_module.quests_widget)
+            return true
+        end
+        return false
+    end
+end
+
+--[[--
+Show actions for a quest (edit, delete, view details).
 --]]
 function Quests:showQuestActions(quest)
-    local complete_text = quest.completed and _("Mark Incomplete") or _("✓ Complete (swipe right)")
-
     local dialog
     dialog = ButtonDialog:new{
         title = quest.title,
         buttons = {
             {{
-                text = complete_text,
+                text = _("View Details"),
                 callback = function()
                     UIManager:close(dialog)
-                    self:toggleQuestComplete(quest)
+                    self:showQuestDetails(quest)
                 end,
             }},
             {{
@@ -263,6 +496,69 @@ function Quests:showQuestActions(quest)
 end
 
 --[[--
+Show quest details with 30-day heatmap.
+--]]
+function Quests:showQuestDetails(quest)
+    -- Build 30-day completion heatmap
+    local heatmap = self:buildQuestHeatmap(quest)
+
+    local energy_text = quest.energy_required or "Any"
+    if type(energy_text) == "table" then
+        energy_text = table.concat(energy_text, ", ")
+    end
+
+    local time_slot = quest.time_slot or "Any time"
+    local quest_type = self.current_type:sub(1,1):upper() .. self.current_type:sub(2)
+
+    local details = string.format(
+        "%s\n\nTime: %s\nEnergy: %s\nType: %s\n\n30-Day Activity:\n%s",
+        quest.title,
+        time_slot,
+        energy_text,
+        quest_type,
+        heatmap
+    )
+
+    UIManager:show(InfoMessage:new{
+        text = details,
+        width = Screen:getWidth() * 0.85,
+    })
+end
+
+--[[--
+Build a 30-day heatmap for a specific quest.
+--]]
+function Quests:buildQuestHeatmap(quest)
+    local today = os.time()
+    local lines = {}
+
+    -- Build 30 days in 6 rows of 5
+    for week = 0, 5 do
+        local row = ""
+        for day = 0, 4 do
+            local day_offset = week * 5 + day
+            if day_offset >= 30 then break end
+
+            local date_time = today - (29 - day_offset) * 86400
+            local date_str = os.date("%Y-%m-%d", date_time)
+
+            -- Check if this quest was completed on this day
+            local completed = false
+            if quest.completed_date == date_str then
+                completed = true
+            end
+
+            row = row .. (completed and "#" or ".")
+        end
+        if row ~= "" then
+            table.insert(lines, row)
+        end
+    end
+
+    return table.concat(lines, "\n")
+end
+
+--[[--
 Toggle quest completion status.
 --]]
 function Quests:toggleQuestComplete(quest)
@@ -273,12 +569,12 @@ function Quests:toggleQuestComplete(quest)
             timeout = 1,
         })
     else
-        -- Update streak
         local today = Data:getCurrentDate()
         local quests = Data:loadAllQuests()
+
         for _, q in ipairs(quests[self.current_type]) do
             if q.id == quest.id then
-                -- Check if streak continues
+                -- Update streak
                 if q.completed_date then
                     local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
                     if q.completed_date == yesterday then
@@ -296,21 +592,43 @@ function Quests:toggleQuestComplete(quest)
         end
         Data:saveAllQuests(quests)
 
-        -- Update daily log for analytics
         self:updateDailyLog()
-
-        -- Update global streak
         self:updateGlobalStreak()
 
         UIManager:show(InfoMessage:new{
-            text = _("Quest completed! 🎉"),
+            text = _("Quest completed!"),
             timeout = 1,
         })
     end
 
-    -- Refresh list
-    if self.menu then UIManager:close(self.menu) end
-    self:showQuestList()
+    -- Refresh
+    UIManager:close(self.quests_widget)
+    self:showQuestsView()
+end
+
+--[[--
+Skip a quest (mark as skipped for today without breaking streak).
+--]]
+function Quests:skipQuest(quest)
+    local today = Data:getCurrentDate()
+    local quests = Data:loadAllQuests()
+
+    for _, q in ipairs(quests[self.current_type]) do
+        if q.id == quest.id then
+            q.skipped_date = today
+            break
+        end
+    end
+    Data:saveAllQuests(quests)
+
+    UIManager:show(InfoMessage:new{
+        text = _("Quest skipped for today"),
+        timeout = 1,
+    })
+
+    -- Refresh
+    UIManager:close(self.quests_widget)
+    self:showQuestsView()
 end
 
 --[[--
@@ -321,7 +639,6 @@ function Quests:updateGlobalStreak()
     local today = Data:getCurrentDate()
 
     if user_settings.streak_data.last_completed_date == today then
-        -- Already counted today
         return
     end
 
@@ -342,29 +659,20 @@ end
 
 --[[--
 Update daily log with quest completion stats.
-This enables the heatmap and journal analytics.
 --]]
 function Quests:updateDailyLog()
     local today = Data:getCurrentDate()
     local quests = Data:loadAllQuests()
     local logs = Data:loadDailyLogs()
 
-    -- Guard against nil data (corrupted files)
-    if not quests then
-        return  -- Can't update log without quest data
-    end
-    if not logs then
-        logs = {}  -- Start fresh if logs are corrupted
-    end
+    if not quests then return end
+    if not logs then logs = {} end
 
-    -- Count today's quests
     local total = 0
     local completed = 0
 
     for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
         for _, quest in ipairs(quests[quest_type] or {}) do
-            -- Count quests that should appear today
-            -- For simplicity, count all active quests
             total = total + 1
             if quest.completed and quest.completed_date == today then
                 completed = completed + 1
@@ -372,7 +680,6 @@ function Quests:updateDailyLog()
         end
     end
 
-    -- Update or create log entry
     if not logs[today] then
         logs[today] = {}
     end
@@ -389,7 +696,7 @@ function Quests:showAddQuestDialog()
     self.new_quest = {
         title = "",
         time_slot = nil,
-        energy_required = "Any",
+        energy_required = {},  -- Multi-select array
     }
     self:showQuestTitleInput(false)
 end
@@ -399,10 +706,14 @@ Show edit quest dialog.
 --]]
 function Quests:showEditQuestDialog(quest)
     self.editing_quest = quest
+    local energy = quest.energy_required
+    if type(energy) == "string" then
+        energy = energy == "Any" and {} or {energy}
+    end
     self.new_quest = {
         title = quest.title,
         time_slot = quest.time_slot,
-        energy_required = quest.energy_required,
+        energy_required = energy or {},
     }
     self:showQuestTitleInput(true)
 end
@@ -478,33 +789,62 @@ function Quests:showTimeSlotSelector(is_edit)
 end
 
 --[[--
-Show energy level selector.
+Show energy level selector (multi-select).
 --]]
 function Quests:showEnergySelector(is_edit)
+    self.selected_energies = {}
+    -- Copy existing selections
+    for _, e in ipairs(self.new_quest.energy_required or {}) do
+        self.selected_energies[e] = true
+    end
+    self:showEnergySelectorWithSelection(is_edit)
+end
+
+function Quests:showEnergySelectorWithSelection(is_edit)
     local user_settings = Data:loadUserSettings()
     local buttons = {}
 
-    -- "Any" option - show on all energy levels
+    -- "Any" option (mutually exclusive with specific selections)
+    local any_selected = next(self.selected_energies) == nil
     table.insert(buttons, {{
-        text = _("Any (always show)"),
+        text = (any_selected and "[X] " or "[ ] ") .. _("Any (always show)"),
         callback = function()
-            self.new_quest.energy_required = "Any"
+            self.selected_energies = {}  -- Clear all
+            UIManager:close(self.energy_dialog)
+            self:showEnergySelectorWithSelection(is_edit)
+        end,
+    }})
+
+    -- Energy categories (multi-select)
+    for _, energy in ipairs(user_settings.energy_categories) do
+        local selected = self.selected_energies[energy] and "[X] " or "[ ] "
+        table.insert(buttons, {{
+            text = selected .. energy,
+            callback = function()
+                if self.selected_energies[energy] then
+                    self.selected_energies[energy] = nil
+                else
+                    self.selected_energies[energy] = true
+                end
+                UIManager:close(self.energy_dialog)
+                self:showEnergySelectorWithSelection(is_edit)
+            end,
+        }})
+    end
+
+    table.insert(buttons, {{
+        text = _("Done"),
+        callback = function()
+            -- Convert to array
+            local energies = {}
+            for e, _ in pairs(self.selected_energies) do
+                table.insert(energies, e)
+            end
+            self.new_quest.energy_required = #energies > 0 and energies or "Any"
             UIManager:close(self.energy_dialog)
             self:saveQuest(is_edit)
         end,
     }})
-
-    -- Energy categories
-    for _, energy in ipairs(user_settings.energy_categories) do
-        table.insert(buttons, {{
-            text = energy,
-            callback = function()
-                self.new_quest.energy_required = energy
-                UIManager:close(self.energy_dialog)
-                self:saveQuest(is_edit)
-            end,
-        }})
-    end
 
     table.insert(buttons, {{
         text = _("Cancel"),
@@ -514,7 +854,7 @@ function Quests:showEnergySelector(is_edit)
     }})
 
     self.energy_dialog = ButtonDialog:new{
-        title = _("On what kind of day?"),
+        title = _("On what kind of day? (multi-select)"),
         buttons = buttons,
     }
     UIManager:show(self.energy_dialog)
@@ -546,9 +886,9 @@ function Quests:saveQuest(is_edit)
         })
     end
 
-    -- Refresh list
-    if self.menu then UIManager:close(self.menu) end
-    self:showQuestList()
+    -- Refresh
+    UIManager:close(self.quests_widget)
+    self:showQuestsView()
 end
 
 --[[--
@@ -574,8 +914,8 @@ function Quests:confirmDeleteQuest(quest)
                         text = _("Quest deleted"),
                         timeout = 2,
                     })
-                    if self.menu then UIManager:close(self.menu) end
-                    self:showQuestList()
+                    UIManager:close(self.quests_widget)
+                    self:showQuestsView()
                 end,
             }},
         },
@@ -585,19 +925,14 @@ end
 
 --[[--
 Get quests filtered by energy level for today.
-@tparam string energy_level Current energy level
-@treturn table Filtered quests from all types
 --]]
 function Quests:getFilteredQuestsForToday(energy_level)
     local quests = Data:loadAllQuests()
-    if not quests then
-        return {}  -- No quests data available
-    end
+    if not quests then return {} end
 
     local user_settings = Data:loadUserSettings()
     local filtered = {}
 
-    -- If energy level not set (first-time user), show all quests
     if not energy_level then
         for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
             for _, quest in ipairs(quests[quest_type] or {}) do
@@ -609,29 +944,31 @@ function Quests:getFilteredQuestsForToday(energy_level)
         return filtered
     end
 
-    -- Get highest energy level from settings (first in list)
-    -- When at highest energy, user sees ALL quests regardless of requirement
     local highest_energy = user_settings.energy_categories and user_settings.energy_categories[1] or "Energetic"
     local is_high_energy = (energy_level == highest_energy)
 
-    -- For daily quests
-    for _, quest in ipairs(quests.daily or {}) do
-        if not quest.completed then
-            if quest.energy_required == "Any" or
-               quest.energy_required == energy_level or
-               is_high_energy then  -- High energy sees all
-                table.insert(filtered, quest)
-            end
-        end
-    end
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
+            if not quest.completed then
+                local energy_req = quest.energy_required
+                local matches = false
 
-    -- Weekly quests also show on dashboard
-    for _, quest in ipairs(quests.weekly or {}) do
-        if not quest.completed then
-            if quest.energy_required == "Any" or
-               quest.energy_required == energy_level or
-               is_high_energy then
-                table.insert(filtered, quest)
+                if energy_req == "Any" or energy_req == nil then
+                    matches = true
+                elseif type(energy_req) == "table" then
+                    for _, e in ipairs(energy_req) do
+                        if e == energy_level or is_high_energy then
+                            matches = true
+                            break
+                        end
+                    end
+                elseif energy_req == energy_level or is_high_energy then
+                    matches = true
+                end
+
+                if matches then
+                    table.insert(filtered, quest)
+                end
             end
         end
     end

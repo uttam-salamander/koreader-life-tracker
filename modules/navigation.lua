@@ -4,17 +4,21 @@ Provides a bullet journal-style right-side tab navigation.
 @module lifetracker.navigation
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
+local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
-local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
-local Screen = require("device").screen
+local Screen = Device.screen
 local _ = require("gettext")
 
 local Navigation = {}
@@ -22,16 +26,15 @@ local Navigation = {}
 -- Tab definitions with vertical labels (diary-style rotated text)
 -- Labels are displayed vertically, one character per line
 Navigation.TABS = {
-    {id = "dashboard", label = "DASH", full = _("Dashboard")},
+    {id = "dashboard", label = "HOME", full = _("Dashboard")},
     {id = "quests",    label = "QUEST", full = _("Quests")},
-    {id = "timeline",  label = "TIME", full = _("Timeline")},
-    {id = "reminders", label = "REM", full = _("Reminders")},
-    {id = "journal",   label = "JRNL", full = _("Journal")},
+    {id = "timeline",  label = "DAY", full = _("Timeline")},
+    {id = "reminders", label = "ALARM", full = _("Reminders")},
+    {id = "journal",   label = "LOG", full = _("Journal")},
 }
 
--- Tab width for the right sidebar (narrower with vertical text)
--- 35px is enough for single characters, like diary month tabs
-Navigation.TAB_WIDTH = 35
+-- Tab width for the right sidebar (wider for better touch targets)
+Navigation.TAB_WIDTH = 60
 
 --[[--
 Create a wrapped content view with right-side tab navigation.
@@ -43,8 +46,6 @@ Create a wrapped content view with right-side tab navigation.
 function Navigation:wrap(content, current_tab, on_tab_change)
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local tab_width = self.TAB_WIDTH
-    local content_width = screen_width - tab_width
 
     -- Store callback
     self.on_tab_change = on_tab_change
@@ -52,19 +53,17 @@ function Navigation:wrap(content, current_tab, on_tab_change)
     -- Build tab column
     local tabs = self:buildTabColumn(current_tab, screen_height)
 
-    -- Build main layout: content on left, tabs on right
-    local layout = HorizontalGroup:new{
-        align = "top",
-        -- Main content (shrunk to fit)
-        FrameContainer:new{
-            width = content_width,
-            height = screen_height,
-            padding = 0,
-            bordersize = 0,
-            content,
+    -- Use OverlapGroup to overlay tabs on top of content
+    -- This ensures tabs are always visible on the right edge
+    local layout = OverlapGroup:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        -- Layer 1: Main content (full screen)
+        content,
+        -- Layer 2: Tabs positioned on the right
+        RightContainer:new{
+            dimen = Geom:new{w = screen_width, h = screen_height},
+            tabs,
         },
-        -- Tab column
-        tabs,
     }
 
     return layout
@@ -78,32 +77,40 @@ Build the vertical tab column.
 --]]
 function Navigation:buildTabColumn(current_tab, height)
     local tab_height = math.floor(height / #self.TABS)
+    local screen_width = Screen:getWidth()
+    local tab_x = screen_width - self.TAB_WIDTH  -- X position of tabs
+
+    -- Create container that holds all tabs with gestures
+    local tabs_container = InputContainer:new{
+        dimen = Geom:new{w = self.TAB_WIDTH, h = height},
+        ges_events = {},  -- Will be populated with tab tap events
+    }
+
     local tabs_group = VerticalGroup:new{ align = "center" }
 
-    for _, tab in ipairs(self.TABS) do
+    for idx, tab in ipairs(self.TABS) do
         local is_active = (tab.id == current_tab)
 
         -- Tab background styling (high contrast for e-ink)
-        -- Active: black bg with white text (maximum contrast)
-        -- Inactive: white bg with black text and border
-        local bg_color = is_active and 0x000000 or 0xFFFFFF
-        local fg_color = is_active and 0xFFFFFF or 0x000000
-        local border_size = is_active and 0 or 1
+        local bg_color = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+        local fg_color = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+        local border_size = is_active and 2 or 1
 
-        -- Create vertical text label (diary-style rotated text)
-        -- Each character is displayed on its own line
+        -- Create vertical text label
         local vertical_label = VerticalGroup:new{ align = "center" }
         for i = 1, #tab.label do
             local char = tab.label:sub(i, i)
             table.insert(vertical_label, TextWidget:new{
                 text = char,
-                face = Font:getFace("tfont", 12),
+                face = Font:getFace("tfont", 14),
                 fgcolor = fg_color,
                 bold = is_active,
             })
         end
 
         -- Wrap in container
+        local inner_width = self.TAB_WIDTH - Size.padding.small * 2
+        local inner_height = tab_height - Size.padding.small * 2
         local tab_frame = FrameContainer:new{
             width = self.TAB_WIDTH,
             height = tab_height,
@@ -111,40 +118,50 @@ function Navigation:buildTabColumn(current_tab, height)
             bordersize = border_size,
             background = bg_color,
             CenterContainer:new{
-                dimen = {w = self.TAB_WIDTH - Size.padding.small * 2, h = tab_height - Size.padding.small * 2},
+                dimen = Geom:new{w = inner_width, h = inner_height},
                 vertical_label,
             },
         }
 
-        -- Make tappable
-        local tab_button = InputContainer:new{
-            dimen = {w = self.TAB_WIDTH, h = tab_height},
-            ges_events = {
-                Tap = {
-                    GestureRange:new{
-                        ges = "tap",
-                        range = {x = 0, y = 0, w = self.TAB_WIDTH, h = tab_height},
-                    },
+        table.insert(tabs_group, tab_frame)
+
+        -- Add tap gesture for this tab region (using screen coordinates)
+        local tab_y = (idx - 1) * tab_height
+        local gesture_name = "Tap_" .. tab.id
+        tabs_container.ges_events[gesture_name] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = tab_x,
+                    y = tab_y,
+                    w = self.TAB_WIDTH,
+                    h = tab_height,
                 },
             },
-            tab_frame,
         }
 
-        -- Store tab ID for callback
-        -- Capture Navigation module in closure to avoid self reference issues
+        -- Create handler for this tab
         local nav = self
-        tab_button.tab_id = tab.id
-        tab_button.onTap = function()
-            if nav.on_tab_change and tab.id ~= current_tab then
-                nav.on_tab_change(tab.id)
+        local tab_id = tab.id
+        tabs_container["on" .. gesture_name] = function()
+            if nav.on_tab_change and tab_id ~= current_tab then
+                nav.on_tab_change(tab_id)
             end
             return true
         end
-
-        table.insert(tabs_group, tab_button)
     end
 
-    return tabs_group
+    -- Add the visual tabs group
+    tabs_container[1] = FrameContainer:new{
+        width = self.TAB_WIDTH,
+        height = height,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        tabs_group,
+    }
+
+    return tabs_container
 end
 
 --[[--
@@ -179,7 +196,7 @@ function Navigation:createView(content, current_tab, on_tab_change, on_close)
             height = screen_height,
             padding = 0,
             bordersize = 0,
-            background = 0xFFFFFF,
+            background = Blitbuffer.COLOR_WHITE,
             wrapped,
         },
     }

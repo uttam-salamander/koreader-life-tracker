@@ -4,26 +4,38 @@ Time-based reminders with gentle notifications.
 @module lifetracker.reminders
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
+local CenterContainer = require("ui/widget/container/centercontainer")
+local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
+local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan = require("ui/widget/horizontalspan")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LineWidget = require("ui/widget/linewidget")
-local Menu = require("ui/widget/menu")
+local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
-local Screen = require("device").screen
+local Screen = Device.screen
 local _ = require("gettext")
 
 local Data = require("modules/data")
+local Navigation = require("modules/navigation")
 
 local Reminders = {}
+
+-- UI Constants
+local REMINDER_ROW_HEIGHT = 50
+local BUTTON_WIDTH = 60
 
 -- Day abbreviations
 local DAY_NAMES = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
@@ -34,105 +46,342 @@ Show the reminders view.
 --]]
 function Reminders:show(ui)
     self.ui = ui
-    self:showRemindersList()
+    self:showRemindersView()
 end
 
 --[[--
-Display the list of reminders.
+Display the reminders with proper navigation.
 --]]
-function Reminders:showRemindersList()
-    local reminders = Data:loadReminders()
+function Reminders:showRemindersView()
     local screen_width = Screen:getWidth()
+    local screen_height = Screen:getHeight()
+    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- Build menu items
-    local menu_items = {}
+    local reminders = Data:loadReminders()
+
+    -- Track Y position for gesture handling
+    self.current_y = Size.padding.large
+
+    -- Main content
+    local content = VerticalGroup:new{ align = "left" }
+
+    -- Header
+    table.insert(content, TextWidget:new{
+        text = _("Reminders"),
+        face = Font:getFace("tfont", 22),
+        bold = true,
+    })
+    self.current_y = self.current_y + 30
+    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+    self.current_y = self.current_y + Size.padding.default
+
+    -- Upcoming Today section
+    local upcoming = self:getUpcomingToday(reminders)
+    self.upcoming_count = #upcoming
+    if #upcoming > 0 then
+        table.insert(content, TextWidget:new{
+            text = _("Upcoming Today"),
+            face = Font:getFace("tfont", 16),
+            bold = true,
+        })
+        self.current_y = self.current_y + 24
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+        self.current_y = self.current_y + Size.padding.small
+
+        for _, reminder in ipairs(upcoming) do
+            local time_until = self:formatTimeUntil(reminder.time)
+            local row = self:buildReminderRow(reminder, content_width, time_until)
+            table.insert(content, row)
+            self.current_y = self.current_y + REMINDER_ROW_HEIGHT + 2
+        end
+        table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+        self.current_y = self.current_y + Size.padding.default
+    end
+
+    -- Separator
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{ w = content_width, h = Size.line.thick },
+        background = Blitbuffer.COLOR_BLACK,
+    })
+    self.current_y = self.current_y + Size.line.thick
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    self.current_y = self.current_y + Size.padding.small
+
+    -- Store starting Y for reminder rows
+    self.reminder_list_start_y = self.current_y
 
     -- Active reminders section
+    self.reminder_rows = {}
     local active_count = 0
     for _, reminder in ipairs(reminders) do
         if reminder.active then
             active_count = active_count + 1
-            local repeat_text = self:formatRepeatDays(reminder.repeat_days)
-            local time_text = reminder.time or "??:??"
-
-            table.insert(menu_items, {
-                text = string.format("⏰ %s  %s  [%s]", time_text, reminder.title, repeat_text),
-                callback = function()
-                    self:showReminderActions(reminder)
-                end,
-            })
+            local row = self:buildReminderRow(reminder, content_width)
+            table.insert(content, row)
+            table.insert(self.reminder_rows, {reminder = reminder, y = self.current_y})
+            self.current_y = self.current_y + REMINDER_ROW_HEIGHT + 2
         end
     end
 
-    -- Inactive reminders section
+    if active_count == 0 then
+        table.insert(content, TextWidget:new{
+            text = _("No active reminders"),
+            face = Font:getFace("cfont", 14),
+            fgcolor = Blitbuffer.gray(0.5),
+        })
+        self.current_y = self.current_y + 20
+    end
+
+    -- Inactive reminders
     local inactive_count = 0
     for _, reminder in ipairs(reminders) do
         if not reminder.active then
-            inactive_count = inactive_count + 1
-            if inactive_count == 1 then
-                -- Add separator before inactive
-                table.insert(menu_items, {
-                    text = "─── Inactive ───",
-                    callback = function() end,
+            if inactive_count == 0 then
+                table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+                self.current_y = self.current_y + Size.padding.default
+                table.insert(content, TextWidget:new{
+                    text = _("Inactive"),
+                    face = Font:getFace("cfont", 12),
+                    fgcolor = Blitbuffer.gray(0.5),
                 })
+                self.current_y = self.current_y + 18
             end
-
-            table.insert(menu_items, {
-                text = string.format("  %s  %s", reminder.time or "??:??", reminder.title),
-                callback = function()
-                    self:showReminderActions(reminder)
-                end,
-            })
+            inactive_count = inactive_count + 1
+            local row = self:buildReminderRow(reminder, content_width, nil, true)
+            table.insert(content, row)
+            table.insert(self.reminder_rows, {reminder = reminder, y = self.current_y})
+            self.current_y = self.current_y + REMINDER_ROW_HEIGHT + 2
         end
     end
 
-    -- Upcoming today section
-    local upcoming = self:getUpcomingToday(reminders)
-    if #upcoming > 0 then
-        table.insert(menu_items, 1, {
-            text = "─── Upcoming Today ───",
-            callback = function() end,
-        })
-        for i, reminder in ipairs(upcoming) do
-            local time_until = self:formatTimeUntil(reminder.time)
-            table.insert(menu_items, i + 1, {
-                text = string.format("  → %s  %s (%s)", reminder.time, reminder.title, time_until),
-                callback = function()
-                    self:showReminderActions(reminder)
-                end,
-            })
-        end
-    end
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+    self.current_y = self.current_y + Size.padding.large
 
-    -- Add button at the end
-    table.insert(menu_items, {
-        text = "[+] Add New Reminder",
-        callback = function()
-            self:showAddReminder()
-        end,
-    })
+    -- Store add button Y position
+    self.add_button_y = self.current_y
 
-    -- Show menu
-    local menu = Menu:new{
-        title = _("Reminders"),
-        item_table = menu_items,
-        width = screen_width,
-        height = Screen:getHeight(),
-        show_parent = self.ui,
-        onMenuHold = function(item)
-            -- Long press to delete
-            if item.reminder then
-                self:confirmDelete(item.reminder)
-            end
-        end,
+    -- Add reminder button
+    local add_button = FrameContainer:new{
+        width = content_width,
+        height = REMINDER_ROW_HEIGHT,
+        padding = Size.padding.small,
+        bordersize = 2,
+        background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = REMINDER_ROW_HEIGHT - Size.padding.small * 2},
+            TextWidget:new{
+                text = _("[+] Add New Reminder"),
+                face = Font:getFace("cfont", 16),
+                bold = true,
+            },
+        },
+    }
+    table.insert(content, add_button)
+
+    -- Wrap content
+    local padded_content = FrameContainer:new{
+        width = screen_width - Navigation.TAB_WIDTH,
+        height = screen_height,
+        padding = Size.padding.large,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        content,
     }
 
-    menu.close_callback = function()
-        UIManager:close(menu)
+    -- Navigation setup
+    local reminders_module = self
+    local ui = self.ui
+
+    local function on_tab_change(tab_id)
+        UIManager:close(reminders_module.reminders_widget)
+        Navigation:navigateTo(tab_id, ui)
     end
 
-    self.menu = menu
-    UIManager:show(menu)
+    -- Build navigation tabs
+    local tabs = Navigation:buildTabColumn("reminders", screen_height)
+    Navigation.on_tab_change = on_tab_change
+
+    -- Create main layout
+    local main_layout = OverlapGroup:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        padded_content,
+        RightContainer:new{
+            dimen = Geom:new{w = screen_width, h = screen_height},
+            tabs,
+        },
+    }
+
+    -- Wrap in InputContainer
+    self.reminders_widget = InputContainer:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        ges_events = {},
+        main_layout,
+    }
+
+    -- Setup gesture handlers
+    self:setupGestureHandlers(content_width)
+
+    UIManager:show(self.reminders_widget)
+end
+
+--[[--
+Build a single reminder row with toggle button.
+--]]
+function Reminders:buildReminderRow(reminder, content_width, time_until, is_inactive)
+    local bg_color = is_inactive and Blitbuffer.gray(0.95) or Blitbuffer.COLOR_WHITE
+    local text_color = is_inactive and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
+
+    local title_width = content_width - BUTTON_WIDTH - Size.padding.small * 3
+
+    local repeat_text = self:formatRepeatDays(reminder.repeat_days)
+    local time_text = reminder.time or "??:??"
+
+    local display_text = string.format("%s  %s  [%s]", time_text, reminder.title, repeat_text)
+    if time_until then
+        display_text = string.format("%s  %s (%s)", time_text, reminder.title, time_until)
+    end
+
+    local title_widget = TextWidget:new{
+        text = display_text,
+        face = Font:getFace("cfont", 14),
+        fgcolor = text_color,
+        max_width = title_width - Size.padding.small * 2,
+    }
+
+    -- Toggle button
+    local toggle_text = reminder.active and "ON" or "OFF"
+    local toggle_bg = reminder.active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+    local toggle_fg = reminder.active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+
+    local toggle_button = FrameContainer:new{
+        width = BUTTON_WIDTH,
+        height = REMINDER_ROW_HEIGHT - 4,
+        padding = 2,
+        bordersize = 1,
+        background = toggle_bg,
+        CenterContainer:new{
+            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = REMINDER_ROW_HEIGHT - 10},
+            TextWidget:new{
+                text = toggle_text,
+                face = Font:getFace("cfont", 12),
+                fgcolor = toggle_fg,
+                bold = true,
+            },
+        },
+    }
+
+    local row = HorizontalGroup:new{
+        align = "center",
+        FrameContainer:new{
+            width = title_width,
+            height = REMINDER_ROW_HEIGHT,
+            padding = Size.padding.small,
+            bordersize = 0,
+            background = bg_color,
+            title_widget,
+        },
+        HorizontalSpan:new{ width = Size.padding.small },
+        toggle_button,
+    }
+
+    return FrameContainer:new{
+        width = content_width,
+        height = REMINDER_ROW_HEIGHT,
+        padding = 0,
+        bordersize = 1,
+        background = bg_color,
+        row,
+    }
+end
+
+--[[--
+Setup gesture handlers for reminders view.
+--]]
+function Reminders:setupGestureHandlers(content_width)  -- upcoming not used anymore
+    local screen_height = Screen:getHeight()
+    local screen_width = Screen:getWidth()
+    local reminders_module = self
+
+    -- Reminder row taps - use tracked Y positions
+    for idx, row_info in ipairs(self.reminder_rows) do
+        local row_y = row_info.y
+        local title_width = content_width - BUTTON_WIDTH - Size.padding.small * 3
+
+        -- Title area tap (opens menu)
+        local title_gesture = "ReminderTitle_" .. idx
+        self.reminders_widget.ges_events[title_gesture] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large,
+                    y = row_y,
+                    w = title_width,
+                    h = REMINDER_ROW_HEIGHT,
+                },
+            },
+        }
+        local reminder = row_info.reminder
+        self.reminders_widget["on" .. title_gesture] = function()
+            reminders_module:showReminderActions(reminder)
+            return true
+        end
+
+        -- Toggle button tap
+        local toggle_gesture = "ReminderToggle_" .. idx
+        self.reminders_widget.ges_events[toggle_gesture] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large + title_width + Size.padding.small,
+                    y = row_y,
+                    w = BUTTON_WIDTH,
+                    h = REMINDER_ROW_HEIGHT,
+                },
+            },
+        }
+        self.reminders_widget["on" .. toggle_gesture] = function()
+            reminders_module:toggleReminder(reminder)
+            return true
+        end
+    end
+
+    -- Add button tap - use tracked position
+    self.reminders_widget.ges_events.AddReminder = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = Size.padding.large,
+                y = self.add_button_y,
+                w = content_width,
+                h = REMINDER_ROW_HEIGHT,
+            },
+        },
+    }
+    self.reminders_widget.onAddReminder = function()
+        reminders_module:showAddReminder()
+        return true
+    end
+
+    -- Swipe to close (leave top 10% for KOReader menu)
+    local top_safe_zone = math.floor(screen_height * 0.1)
+    self.reminders_widget.ges_events.Swipe = {
+        GestureRange:new{
+            ges = "swipe",
+            range = Geom:new{
+                x = 0,
+                y = top_safe_zone,
+                w = screen_width - Navigation.TAB_WIDTH,
+                h = screen_height - top_safe_zone,
+            },
+        },
+    }
+    self.reminders_widget.onSwipe = function(_, _, ges)
+        if ges.direction == "east" then
+            UIManager:close(reminders_module.reminders_widget)
+            return true
+        end
+        return false
+    end
 end
 
 --[[--
@@ -173,7 +422,6 @@ function Reminders:formatRepeatDays(repeat_days)
         return "Weekends"
     end
 
-    -- Otherwise list abbreviated days
     return table.concat(repeat_days, "/")
 end
 
@@ -189,10 +437,9 @@ function Reminders:getUpcomingToday(reminders)
 
     for _, reminder in ipairs(reminders) do
         if reminder.active then
-            -- Check if reminder is scheduled for today
             local is_today = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
-                is_today = true  -- One-time reminders show today
+                is_today = true
             else
                 for _, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
@@ -203,7 +450,6 @@ function Reminders:getUpcomingToday(reminders)
             end
 
             if is_today and reminder.time then
-                -- Parse time
                 local hour, min = reminder.time:match("(%d+):(%d+)")
                 if hour and min then
                     local reminder_minutes = tonumber(hour) * 60 + tonumber(min)
@@ -215,7 +461,6 @@ function Reminders:getUpcomingToday(reminders)
         end
     end
 
-    -- Sort by time
     table.sort(upcoming, function(a, b)
         return a.time < b.time
     end)
@@ -247,7 +492,7 @@ function Reminders:formatTimeUntil(time_str)
         if mins > 0 then
             return string.format("in %dh %dm", hours, mins)
         else
-            return string.format("in %d hour%s", hours, hours > 1 and "s" or "")
+            return string.format("in %dh", hours)
         end
     end
 end
@@ -258,246 +503,205 @@ Show actions for a reminder (edit, toggle, delete).
 function Reminders:showReminderActions(reminder)
     local toggle_text = reminder.active and _("Disable") or _("Enable")
 
-    local buttons = {
-        {
-            {
+    local dialog
+    dialog = ButtonDialog:new{
+        title = reminder.title,
+        buttons = {
+            {{
                 text = _("Edit"),
                 callback = function()
-                    UIManager:close(self.action_dialog)
+                    UIManager:close(dialog)
                     self:showEditReminder(reminder)
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = toggle_text,
                 callback = function()
-                    UIManager:close(self.action_dialog)
+                    UIManager:close(dialog)
                     self:toggleReminder(reminder)
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Delete"),
                 callback = function()
-                    UIManager:close(self.action_dialog)
+                    UIManager:close(dialog)
                     self:confirmDelete(reminder)
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Cancel"),
                 callback = function()
-                    UIManager:close(self.action_dialog)
+                    UIManager:close(dialog)
                 end,
-            },
+            }},
         },
     }
-
-    self.action_dialog = ButtonDialog:new{
-        title = reminder.title,
-        buttons = buttons,
-    }
-    UIManager:show(self.action_dialog)
+    UIManager:show(dialog)
 end
 
 --[[--
 Show dialog to add a new reminder.
 --]]
 function Reminders:showAddReminder()
-    -- Step 1: Get title
-    self.add_dialog = InputDialog:new{
+    local dialog
+    dialog = InputDialog:new{
         title = _("New Reminder"),
         input_hint = _("What do you want to remember?"),
-        buttons = {
+        buttons = {{
             {
-                {
-                    text = _("Cancel"),
-                    callback = function()
-                        UIManager:close(self.add_dialog)
-                    end,
-                },
-                {
-                    text = _("Next"),
-                    callback = function()
-                        local title = self.add_dialog:getInputText()
-                        UIManager:close(self.add_dialog)
-                        if title and title ~= "" then
-                            self:showTimeInput(title)
-                        end
-                    end,
-                },
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
             },
-        },
+            {
+                text = _("Next"),
+                callback = function()
+                    local title = dialog:getInputText()
+                    UIManager:close(dialog)
+                    if title and title ~= "" then
+                        self:showTimeInput(title)
+                    end
+                end,
+            },
+        }},
     }
-    UIManager:show(self.add_dialog)
-    self.add_dialog:onShowKeyboard()
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 --[[--
 Step 2: Get time for reminder.
 --]]
 function Reminders:showTimeInput(title)
-    self.time_dialog = InputDialog:new{
+    local dialog
+    dialog = InputDialog:new{
         title = _("Set Time"),
         input_hint = _("HH:MM (24-hour format)"),
         input = "08:00",
-        buttons = {
+        buttons = {{
             {
-                {
-                    text = _("Back"),
-                    callback = function()
-                        UIManager:close(self.time_dialog)
-                        self:showAddReminder()
-                    end,
-                },
-                {
-                    text = _("Next"),
-                    callback = function()
-                        local time = self.time_dialog:getInputText()
-                        UIManager:close(self.time_dialog)
-                        if time and time:match("^%d%d?:%d%d$") then
-                            self:showRepeatDays(title, time)
-                        else
-                            UIManager:show(InfoMessage:new{
-                                text = _("Please enter time in HH:MM format"),
-                            })
-                        end
-                    end,
-                },
+                text = _("Back"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showAddReminder()
+                end,
             },
-        },
+            {
+                text = _("Next"),
+                callback = function()
+                    local time = dialog:getInputText()
+                    UIManager:close(dialog)
+                    if time and time:match("^%d%d?:%d%d$") then
+                        self:showRepeatDays(title, time)
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter time in HH:MM format"),
+                        })
+                    end
+                end,
+            },
+        }},
     }
-    UIManager:show(self.time_dialog)
-    self.time_dialog:onShowKeyboard()
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 --[[--
 Step 3: Select repeat days.
 --]]
 function Reminders:showRepeatDays(title, time)
-    local buttons = {
-        {
-            {
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("Repeat"),
+        buttons = {
+            {{
                 text = _("Daily"),
                 callback = function()
-                    UIManager:close(self.days_dialog)
+                    UIManager:close(dialog)
                     self:createReminder(title, time, {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"})
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Weekdays (Mon-Fri)"),
                 callback = function()
-                    UIManager:close(self.days_dialog)
+                    UIManager:close(dialog)
                     self:createReminder(title, time, {"Mon", "Tue", "Wed", "Thu", "Fri"})
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Weekends (Sat-Sun)"),
                 callback = function()
-                    UIManager:close(self.days_dialog)
+                    UIManager:close(dialog)
                     self:createReminder(title, time, {"Sat", "Sun"})
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Once (no repeat)"),
                 callback = function()
-                    UIManager:close(self.days_dialog)
+                    UIManager:close(dialog)
                     self:createReminder(title, time, {})
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Custom Days..."),
                 callback = function()
-                    UIManager:close(self.days_dialog)
+                    UIManager:close(dialog)
                     self:showCustomDays(title, time)
                 end,
-            },
-        },
-        {
-            {
+            }},
+            {{
                 text = _("Cancel"),
                 callback = function()
-                    UIManager:close(self.days_dialog)
+                    UIManager:close(dialog)
                 end,
-            },
+            }},
         },
     }
-
-    self.days_dialog = ButtonDialog:new{
-        title = _("Repeat"),
-        buttons = buttons,
-    }
-    UIManager:show(self.days_dialog)
+    UIManager:show(dialog)
 end
 
 --[[--
 Show custom day selection.
 --]]
 function Reminders:showCustomDays(title, time)
-    local selected_days = {}
-
-    local function toggleDay(day)
-        if selected_days[day] then
-            selected_days[day] = nil
-        else
-            selected_days[day] = true
-        end
-        -- Refresh dialog to show updated selection
-        UIManager:close(self.custom_dialog)
-        self:showCustomDaysWithSelection(title, time, selected_days)
-    end
-
-    self:showCustomDaysWithSelection(title, time, selected_days)
+    self.selected_days = {}
+    self:showCustomDaysWithSelection(title, time)
 end
 
-function Reminders:showCustomDaysWithSelection(title, time, selected_days)
+function Reminders:showCustomDaysWithSelection(title, time)
     local buttons = {}
 
     for i, day in ipairs(DAY_FULL) do
         local abbr = DAY_NAMES[i]
-        local selected = selected_days[abbr] and "✓ " or "  "
-        table.insert(buttons, {
-            {
-                text = selected .. day,
-                callback = function()
-                    if selected_days[abbr] then
-                        selected_days[abbr] = nil
-                    else
-                        selected_days[abbr] = true
-                    end
-                    UIManager:close(self.custom_dialog)
-                    self:showCustomDaysWithSelection(title, time, selected_days)
-                end,
-            },
-        })
+        local selected = self.selected_days[abbr] and "[X] " or "[ ] "
+        table.insert(buttons, {{
+            text = selected .. day,
+            callback = function()
+                if self.selected_days[abbr] then
+                    self.selected_days[abbr] = nil
+                else
+                    self.selected_days[abbr] = true
+                end
+                UIManager:close(self.custom_dialog)
+                self:showCustomDaysWithSelection(title, time)
+            end,
+        }})
     end
 
-    table.insert(buttons, {
-        {
-            text = _("Done"),
-            callback = function()
-                UIManager:close(self.custom_dialog)
-                local days = {}
-                for _, abbr in ipairs(DAY_NAMES) do
-                    if selected_days[abbr] then
-                        table.insert(days, abbr)
-                    end
+    table.insert(buttons, {{
+        text = _("Done"),
+        callback = function()
+            UIManager:close(self.custom_dialog)
+            local days = {}
+            for _, abbr in ipairs(DAY_NAMES) do
+                if self.selected_days[abbr] then
+                    table.insert(days, abbr)
                 end
-                self:createReminder(title, time, days)
-            end,
-        },
-    })
+            end
+            self:createReminder(title, time, days)
+        end,
+    }})
 
     self.custom_dialog = ButtonDialog:new{
         title = _("Select Days"),
@@ -519,49 +723,45 @@ function Reminders:createReminder(title, time, repeat_days)
 
     UIManager:show(InfoMessage:new{
         text = _("Reminder added!"),
+        timeout = 2,
     })
 
-    -- Refresh list
-    if self.menu then
-        UIManager:close(self.menu)
-    end
-    self:showRemindersList()
+    -- Refresh
+    UIManager:close(self.reminders_widget)
+    self:showRemindersView()
 end
 
 --[[--
 Show edit dialog for a reminder.
 --]]
 function Reminders:showEditReminder(reminder)
-    self.edit_dialog = InputDialog:new{
+    local dialog
+    dialog = InputDialog:new{
         title = _("Edit Reminder"),
         input = reminder.title,
-        buttons = {
+        buttons = {{
             {
-                {
-                    text = _("Cancel"),
-                    callback = function()
-                        UIManager:close(self.edit_dialog)
-                    end,
-                },
-                {
-                    text = _("Save"),
-                    callback = function()
-                        local new_title = self.edit_dialog:getInputText()
-                        UIManager:close(self.edit_dialog)
-                        if new_title and new_title ~= "" then
-                            Data:updateReminder(reminder.id, {title = new_title})
-                            if self.menu then
-                                UIManager:close(self.menu)
-                            end
-                            self:showRemindersList()
-                        end
-                    end,
-                },
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
             },
-        },
+            {
+                text = _("Save"),
+                callback = function()
+                    local new_title = dialog:getInputText()
+                    UIManager:close(dialog)
+                    if new_title and new_title ~= "" then
+                        Data:updateReminder(reminder.id, {title = new_title})
+                        UIManager:close(self.reminders_widget)
+                        self:showRemindersView()
+                    end
+                end,
+            },
+        }},
     }
-    UIManager:show(self.edit_dialog)
-    self.edit_dialog:onShowKeyboard()
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 --[[--
@@ -570,48 +770,40 @@ Toggle reminder active state.
 function Reminders:toggleReminder(reminder)
     Data:updateReminder(reminder.id, {active = not reminder.active})
 
-    if self.menu then
-        UIManager:close(self.menu)
-    end
-    self:showRemindersList()
+    UIManager:close(self.reminders_widget)
+    self:showRemindersView()
 end
 
 --[[--
 Confirm deletion of a reminder.
 --]]
 function Reminders:confirmDelete(reminder)
-    local buttons = {
-        {
-            {
+    local dialog
+    dialog = ButtonDialog:new{
+        title = string.format(_("Delete '%s'?"), reminder.title),
+        buttons = {
+            {{
                 text = _("Cancel"),
                 callback = function()
-                    UIManager:close(self.confirm_dialog)
+                    UIManager:close(dialog)
                 end,
-            },
-            {
+            }},
+            {{
                 text = _("Delete"),
                 callback = function()
-                    UIManager:close(self.confirm_dialog)
+                    UIManager:close(dialog)
                     Data:deleteReminder(reminder.id)
-                    if self.menu then
-                        UIManager:close(self.menu)
-                    end
-                    self:showRemindersList()
+                    UIManager:close(self.reminders_widget)
+                    self:showRemindersView()
                 end,
-            },
+            }},
         },
     }
-
-    self.confirm_dialog = ButtonDialog:new{
-        title = string.format(_("Delete '%s'?"), reminder.title),
-        buttons = buttons,
-    }
-    UIManager:show(self.confirm_dialog)
+    UIManager:show(dialog)
 end
 
 --[[--
 Check for due reminders (called periodically by main plugin).
-Returns reminders that should fire now.
 --]]
 function Reminders:checkDueReminders()
     local reminders = Data:loadReminders()
@@ -624,18 +816,14 @@ function Reminders:checkDueReminders()
 
     for _, reminder in ipairs(reminders) do
         if reminder.active and reminder.time == current_time then
-            -- Check if should fire today
             local should_fire = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
-                -- One-time reminder - check if already triggered
                 if reminder.last_triggered ~= today_date then
                     should_fire = true
                 end
             else
-                -- Repeating reminder - check if today is in repeat days
                 for _, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
-                        -- Check if already triggered today
                         if reminder.last_triggered ~= today_date then
                             should_fire = true
                         end
@@ -646,7 +834,6 @@ function Reminders:checkDueReminders()
 
             if should_fire then
                 table.insert(due, reminder)
-                -- Mark as triggered today
                 Data:updateReminder(reminder.id, {last_triggered = today_date})
             end
         end
@@ -659,11 +846,48 @@ end
 Show a gentle notification for a reminder.
 --]]
 function Reminders:showNotification(reminder)
-    -- Gentle, encouraging notification
     UIManager:show(InfoMessage:new{
-        text = string.format("🔔 %s\n\nTime for: %s", reminder.time, reminder.title),
-        timeout = 10,  -- Auto-dismiss after 10 seconds
+        text = string.format("%s\n\nTime for: %s", reminder.time, reminder.title),
+        timeout = 10,
     })
+end
+
+--[[--
+Get today's reminders for dashboard display.
+--]]
+function Reminders:getTodayReminders()
+    local reminders = Data:loadReminders()
+    local now = os.date("*t")
+    local today_abbr = DAY_NAMES[now.wday]
+
+    local today_reminders = {}
+
+    for _, reminder in ipairs(reminders) do
+        if reminder.active then
+            local is_today = false
+            if not reminder.repeat_days or #reminder.repeat_days == 0 then
+                is_today = true
+            else
+                for _, day in ipairs(reminder.repeat_days) do
+                    if day == today_abbr then
+                        is_today = true
+                        break
+                    end
+                end
+            end
+
+            if is_today then
+                table.insert(today_reminders, reminder)
+            end
+        end
+    end
+
+    -- Sort by time
+    table.sort(today_reminders, function(a, b)
+        return (a.time or "00:00") < (b.time or "00:00")
+    end)
+
+    return today_reminders
 end
 
 return Reminders

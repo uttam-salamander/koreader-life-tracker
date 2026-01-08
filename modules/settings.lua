@@ -21,6 +21,7 @@ Show the settings menu.
 @tparam table ui The UI manager reference
 --]]
 function Settings:show(ui)
+    self.ui = ui
     local user_settings = Data:loadUserSettings()
 
     local menu
@@ -28,11 +29,21 @@ function Settings:show(ui)
         title = _("Life Tracker Settings"),
         item_table = {
             {
+                text = _("Open Dashboard"),
+                callback = function()
+                    UIManager:close(menu)
+                    local Dashboard = require("modules/dashboard")
+                    Dashboard:show(ui)
+                end,
+                help_text = _("Go to the Life Tracker dashboard"),
+            },
+            {
                 text = _("Energy Categories"),
                 callback = function()
                     UIManager:close(menu)
                     self:showEnergyCategoriesMenu(ui, user_settings)
                 end,
+                help_text = _("Customize your energy level options"),
             },
             {
                 text = _("Time Slots"),
@@ -40,6 +51,7 @@ function Settings:show(ui)
                     UIManager:close(menu)
                     self:showTimeSlotsMenu(ui, user_settings)
                 end,
+                help_text = _("Customize time of day categories"),
             },
             {
                 text = _("Lock Screen Dashboard"),
@@ -60,6 +72,7 @@ function Settings:show(ui)
                     UIManager:close(menu)
                     self:confirmResetData(ui)
                 end,
+                help_text = _("Delete all quests, reminders, and logs"),
             },
         },
         close_callback = function()

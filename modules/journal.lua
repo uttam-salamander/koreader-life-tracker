@@ -4,24 +4,29 @@ Mood tracking, weekly review, and insights with reading correlation.
 @module lifetracker.journal
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
-local CenterContainer = require("ui/widget/container/centercontainer")
+local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
+local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LineWidget = require("ui/widget/linewidget")
+local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
-local Screen = require("device").screen
+local Screen = Device.screen
 local _ = require("gettext")
 
 local Data = require("modules/data")
+local Navigation = require("modules/navigation")
 
 local Journal = {}
 
@@ -38,6 +43,9 @@ Build and display the journal view.
 --]]
 function Journal:showJournalView()
     local screen_width = Screen:getWidth()
+    local screen_height = Screen:getHeight()
+    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+
     local content = VerticalGroup:new{ align = "left" }
 
     -- Header
@@ -46,7 +54,7 @@ function Journal:showJournalView()
         face = Font:getFace("tfont", 20),
         bold = true,
     })
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
     -- Weekly Review Section
     table.insert(content, TextWidget:new{
@@ -55,10 +63,10 @@ function Journal:showJournalView()
         bold = true,
     })
     table.insert(content, LineWidget:new{
-        dimen = { w = screen_width - 40, h = 1 },
-        background = 0x888888,
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = Blitbuffer.gray(0.5),
     })
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_default })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     local weekly_stats = self:getWeeklyStats()
     table.insert(content, TextWidget:new{
@@ -73,7 +81,7 @@ function Journal:showJournalView()
         text = string.format("Missed: %d quests", weekly_stats.missed),
         face = Font:getFace("cfont", 14),
     })
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
     -- Mood This Week Section
     table.insert(content, TextWidget:new{
@@ -82,10 +90,10 @@ function Journal:showJournalView()
         bold = true,
     })
     table.insert(content, LineWidget:new{
-        dimen = { w = screen_width - 40, h = 1 },
-        background = 0x888888,
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = Blitbuffer.gray(0.5),
     })
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_default })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     local mood_data = self:getWeeklyMood()
     for _, day in ipairs(mood_data) do
@@ -96,83 +104,117 @@ function Journal:showJournalView()
             face = Font:getFace("cfont", 12),
         })
     end
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
     -- Pattern Insight
     local insight = self:generateInsight(weekly_stats, mood_data)
     if insight then
         table.insert(content, TextWidget:new{
-            text = "💡 Pattern: " .. insight,
+            text = "Pattern: " .. insight,
             face = Font:getFace("cfont", 14),
-            fgcolor = 0x444444,
+            fgcolor = Blitbuffer.gray(0.3),
         })
-        table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.large })
     end
 
     -- Reading Correlation
     local reading_insight = self:getReadingCorrelation()
     if reading_insight then
         table.insert(content, TextWidget:new{
-            text = "📖 Reading: " .. reading_insight,
+            text = "Reading: " .. reading_insight,
             face = Font:getFace("cfont", 14),
-            fgcolor = 0x444444,
+            fgcolor = Blitbuffer.gray(0.3),
         })
-        table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.large })
     end
 
-    -- Add Reflection Button
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+    -- Add Reflection Button (tap anywhere to show menu)
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
     table.insert(content, TextWidget:new{
-        text = "[Add Reflection Note]",
+        text = "[Tap for menu]",
         face = Font:getFace("cfont", 14),
-        fgcolor = 0x0066CC,
+        fgcolor = Blitbuffer.gray(0.5),
     })
 
-    -- Build frame
-    local frame = FrameContainer:new{
-        width = screen_width,
-        height = Screen:getHeight(),
+    -- Wrap content in frame
+    local padded_content = FrameContainer:new{
+        width = screen_width - Navigation.TAB_WIDTH,
+        height = screen_height,
         padding = Size.padding.large,
         bordersize = 0,
-        background = 0xFFFFFF,
+        background = Blitbuffer.COLOR_WHITE,
         content,
     }
 
-    -- Wrap for gestures
-    local container = InputContainer:new{
-        dimen = Screen:getSize(),
-        ges_events = {
-            Tap = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = frame.dimen,
-                },
-            },
-            Swipe = {
-                GestureRange:new{
-                    ges = "swipe",
-                    range = frame.dimen,
-                },
-            },
+    -- Setup navigation
+    local journal = self
+    local ui = self.ui
+
+    local function on_tab_change(tab_id)
+        UIManager:close(journal.journal_widget)
+        Navigation:navigateTo(tab_id, ui)
+    end
+
+    -- Build navigation tabs
+    local tabs = Navigation:buildTabColumn("journal", screen_height)
+    Navigation.on_tab_change = on_tab_change
+
+    -- Create the main layout with content and navigation
+    local main_layout = OverlapGroup:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        padded_content,
+        RightContainer:new{
+            dimen = Geom:new{w = screen_width, h = screen_height},
+            tabs,
         },
-        frame,
     }
 
-    function container:onTap()
-        Journal:showActions()
+    -- Wrap in InputContainer for gestures
+    self.journal_widget = InputContainer:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        ges_events = {},
+        main_layout,
+    }
+
+    -- Tap anywhere in content area to show menu (leave top 10% for KOReader menu)
+    local top_safe_zone = math.floor(screen_height * 0.1)
+    self.journal_widget.ges_events.Tap = {
+        GestureRange:new{
+            ges = "tap",
+            range = Geom:new{
+                x = 0,
+                y = top_safe_zone,
+                w = screen_width - Navigation.TAB_WIDTH,
+                h = screen_height - top_safe_zone,
+            },
+        },
+    }
+    self.journal_widget.onTap = function()
+        self:showActions()
         return true
     end
 
-    function container:onSwipe(_, ges)
+    -- Swipe gestures (leave top 10% for KOReader menu)
+    self.journal_widget.ges_events.Swipe = {
+        GestureRange:new{
+            ges = "swipe",
+            range = Geom:new{
+                x = 0,
+                y = top_safe_zone,
+                w = screen_width - Navigation.TAB_WIDTH,
+                h = screen_height - top_safe_zone,
+            },
+        },
+    }
+    self.journal_widget.onSwipe = function(_, _, ges)
         if ges.direction == "east" then
-            UIManager:close(self)
+            UIManager:close(self.journal_widget)
             return true
         end
         return false
     end
 
-    self.journal_widget = container
-    UIManager:show(container)
+    UIManager:show(self.journal_widget)
 end
 
 --[[--
@@ -180,42 +222,33 @@ Show journal actions.
 --]]
 function Journal:showActions()
     local buttons = {
-        {
-            {
-                text = _("Add Reflection"),
-                callback = function()
-                    UIManager:close(self.action_dialog)
-                    self:showAddReflection()
-                end,
-            },
-        },
-        {
-            {
-                text = _("View Past Reflections"),
-                callback = function()
-                    UIManager:close(self.action_dialog)
-                    self:showPastReflections()
-                end,
-            },
-        },
-        {
-            {
-                text = _("Monthly Summary"),
-                callback = function()
-                    UIManager:close(self.action_dialog)
-                    self:showMonthlySummary()
-                end,
-            },
-        },
-        {
-            {
-                text = _("Close"),
-                callback = function()
-                    UIManager:close(self.action_dialog)
-                    UIManager:close(self.journal_widget)
-                end,
-            },
-        },
+        {{
+            text = _("Add Reflection"),
+            callback = function()
+                UIManager:close(self.action_dialog)
+                self:showAddReflection()
+            end,
+        }},
+        {{
+            text = _("View Past Reflections"),
+            callback = function()
+                UIManager:close(self.action_dialog)
+                self:showPastReflections()
+            end,
+        }},
+        {{
+            text = _("Monthly Summary"),
+            callback = function()
+                UIManager:close(self.action_dialog)
+                self:showMonthlySummary()
+            end,
+        }},
+        {{
+            text = _("Cancel"),
+            callback = function()
+                UIManager:close(self.action_dialog)
+            end,
+        }},
     }
 
     self.action_dialog = ButtonDialog:new{
@@ -320,18 +353,18 @@ end
 --[[--
 Generate an insight based on patterns.
 --]]
-function Journal:generateInsight(weekly_stats, mood_data)
+function Journal:generateInsight(weekly_stats, _mood_data)
     -- Check for energy-productivity correlation
-    local high_energy_completion = 0
-    local high_energy_days = 0
-    local low_energy_completion = 0
-    local low_energy_days = 0
-
     local logs = Data:loadDailyLogs()
     local settings = Data:loadUserSettings()
     local energy_categories = settings.energy_categories or {"Energetic", "Average", "Down"}
     local high_energy = energy_categories[1]
     local low_energy = energy_categories[#energy_categories]
+
+    local high_energy_completion = 0
+    local high_energy_days = 0
+    local low_energy_completion = 0
+    local low_energy_days = 0
 
     local today = os.time()
     for i = 0, 6 do
@@ -360,8 +393,7 @@ function Journal:generateInsight(weekly_stats, mood_data)
 
     if high_avg > low_avg + 0.3 then
         local diff = math.floor((high_avg - low_avg) * 100)
-        return string.format("You complete %d%% more on %s days. Consider lighter loads on %s days.",
-            diff, high_energy, low_energy)
+        return string.format("You complete %d%% more on %s days.", diff, high_energy)
     end
 
     if weekly_stats.completion_rate >= 80 then
@@ -369,7 +401,7 @@ function Journal:generateInsight(weekly_stats, mood_data)
     end
 
     if weekly_stats.missed > 5 then
-        return "Consider reducing quest count or breaking large tasks into smaller ones."
+        return "Consider reducing quest count or breaking tasks smaller."
     end
 
     return nil
@@ -415,7 +447,7 @@ function Journal:getReadingCorrelation()
 
         if reading_avg > non_reading_avg + 0.2 then
             local diff = math.floor((reading_avg - non_reading_avg) * 100)
-            return string.format("Days with reading show %d%% higher quest completion.", diff)
+            return string.format("Days with reading show %d%% higher completion.", diff)
         end
     end
 
@@ -507,7 +539,7 @@ function Journal:showPastReflections()
     local content = ""
     for i, r in ipairs(reflections) do
         if i <= 5 then  -- Show last 5
-            content = content .. string.format("── %s ──\n%s\n\n", r.date, r.text)
+            content = content .. string.format("-- %s --\n%s\n\n", r.date, r.text)
         end
     end
 
@@ -551,16 +583,15 @@ function Journal:showMonthlySummary()
 
     local summary = string.format([[
 %s Summary
-═══════════════════════
 
 Days Tracked: %d
 Quests Completed: %d/%d (%d%%)
 
-📖 Reading
+Reading
 Pages: %d
 Time: %d hours
 
-Keep going! 🔥
+Keep going!
 ]], month_name, days_logged, total_completed, total_assigned, completion_rate, total_reading_pages, reading_hours)
 
     UIManager:show(InfoMessage:new{

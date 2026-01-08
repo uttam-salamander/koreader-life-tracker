@@ -4,24 +4,32 @@ Visual day view with quests grouped by time-of-day slots.
 @module lifetracker.timeline
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
-local CenterContainer = require("ui/widget/container/centercontainer")
+local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
+local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
+local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
-local Screen = require("device").screen
+local Screen = Device.screen
 local _ = require("gettext")
 
 local Data = require("modules/data")
+local Navigation = require("modules/navigation")
 
 local Timeline = {}
+
+-- Touch target height for quest items
+local TOUCH_TARGET_HEIGHT = 44
 
 --[[--
 Show the timeline view for today.
@@ -37,6 +45,9 @@ Groups quests by time slot (Morning, Afternoon, Evening, Night).
 --]]
 function Timeline:showTimelineView()
     local screen_width = Screen:getWidth()
+    local screen_height = Screen:getHeight()
+    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+
     local content = VerticalGroup:new{ align = "left" }
 
     -- Header with date
@@ -46,7 +57,7 @@ function Timeline:showTimelineView()
         face = Font:getFace("tfont", 20),
         bold = true,
     })
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
     -- Get settings and quests
     local settings = Data:loadUserSettings()
@@ -57,55 +68,72 @@ function Timeline:showTimelineView()
     local total_quests = 0
     local completed_quests = 0
 
+    -- Store quest positions for tap handling
+    self.quest_touch_areas = {}
+
     -- Build time slot sections
     for _, slot in ipairs(time_slots) do
         local slot_quests = self:getQuestsForSlot(today_quests, slot)
         total_quests = total_quests + #slot_quests
 
-        -- Slot header
+        -- Slot header with separator line
         table.insert(content, LineWidget:new{
-            dimen = { w = screen_width - 40, h = 2 },
-            background = 0x000000,
+            dimen = Geom:new{ w = content_width, h = 2 },
+            background = Blitbuffer.COLOR_BLACK,
         })
         table.insert(content, TextWidget:new{
-            text = "═══ " .. string.upper(slot) .. " ═══",
+            text = string.upper(slot),
             face = Font:getFace("tfont", 16),
             bold = true,
         })
-        table.insert(content, VerticalSpan:new{ width = Size.span.vertical_default })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
         -- Quest items for this slot
         if #slot_quests == 0 then
             table.insert(content, TextWidget:new{
                 text = "  (no quests)",
                 face = Font:getFace("cfont", 14),
-                fgcolor = 0x666666,
+                fgcolor = Blitbuffer.gray(0.4),
             })
         else
             for _, quest in ipairs(slot_quests) do
-                local symbol = quest.completed and "✓" or "○"
+                local symbol = quest.completed and "[X]" or "[ ]"
                 local text = quest.title
                 if quest.completed then
-                    text = "~~" .. text .. "~~"
                     completed_quests = completed_quests + 1
                 end
 
-                table.insert(content, TextWidget:new{
-                    text = "  " .. symbol .. " " .. text,
-                    face = Font:getFace("cfont", 16),
-                    fgcolor = quest.completed and 0x888888 or 0x000000,
+                -- Create tappable quest row
+                local quest_row = FrameContainer:new{
+                    width = content_width,
+                    height = TOUCH_TARGET_HEIGHT,
+                    padding = Size.padding.small,
+                    bordersize = 0,
+                    background = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE,
+                    TextWidget:new{
+                        text = string.format("  %s %s", symbol, text),
+                        face = Font:getFace("cfont", 16),
+                        fgcolor = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK,
+                    },
+                }
+
+                -- Store quest info for tap handling
+                table.insert(self.quest_touch_areas, {
+                    quest = quest,
                 })
+
+                table.insert(content, quest_row)
             end
         end
-        table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.default })
     end
 
     -- Progress footer
     table.insert(content, LineWidget:new{
-        dimen = { w = screen_width - 40, h = 1 },
-        background = 0x888888,
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = Blitbuffer.gray(0.5),
     })
-    table.insert(content, VerticalSpan:new{ width = Size.span.vertical_default })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     local progress_pct = total_quests > 0 and math.floor((completed_quests / total_quests) * 100) or 0
     table.insert(content, TextWidget:new{
@@ -114,143 +142,188 @@ function Timeline:showTimelineView()
         bold = true,
     })
 
-    -- Build scrollable container
-    local frame = FrameContainer:new{
-        width = screen_width,
-        height = Screen:getHeight(),
+    -- Wrap content in frame
+    local padded_content = FrameContainer:new{
+        width = screen_width - Navigation.TAB_WIDTH,
+        height = screen_height,
         padding = Size.padding.large,
         bordersize = 0,
-        background = 0xFFFFFF,
+        background = Blitbuffer.COLOR_WHITE,
         content,
     }
 
-    -- Wrap in InputContainer for gestures
-    local container = InputContainer:new{
-        dimen = Screen:getSize(),
-        ges_events = {
-            Tap = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = frame.dimen,
-                },
-            },
-            Swipe = {
-                GestureRange:new{
-                    ges = "swipe",
-                    range = frame.dimen,
-                },
-            },
-        },
-        frame,
-    }
+    -- Setup navigation
+    local timeline = self
+    local ui = self.ui
 
-    function container:onTap()
-        self:showQuestActions()
-        return true
+    local function on_tab_change(tab_id)
+        UIManager:close(timeline.timeline_widget)
+        Navigation:navigateTo(tab_id, ui)
     end
 
-    function container:onSwipe(_, ges)
+    -- Build navigation tabs
+    local tabs = Navigation:buildTabColumn("timeline", screen_height)
+    Navigation.on_tab_change = on_tab_change
+
+    -- Create the main layout with content and navigation
+    local main_layout = OverlapGroup:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        padded_content,
+        RightContainer:new{
+            dimen = Geom:new{w = screen_width, h = screen_height},
+            tabs,
+        },
+    }
+
+    -- Wrap in InputContainer for gestures
+    self.timeline_widget = InputContainer:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        ges_events = {},
+        main_layout,
+    }
+
+    -- Setup quest tap handlers
+    self:setupQuestTapHandlers()
+
+    -- Swipe gestures (leave top 10% for KOReader menu)
+    local top_safe_zone = math.floor(screen_height * 0.1)
+    self.timeline_widget.ges_events.Swipe = {
+        GestureRange:new{
+            ges = "swipe",
+            range = Geom:new{
+                x = 0,
+                y = top_safe_zone,
+                w = screen_width - Navigation.TAB_WIDTH,
+                h = screen_height - top_safe_zone,
+            },
+        },
+    }
+    self.timeline_widget.onSwipe = function(_, _, ges)
         if ges.direction == "east" then
-            -- Swipe right to go back
-            UIManager:close(self)
+            UIManager:close(self.timeline_widget)
             return true
         end
         return false
     end
 
-    function container:showQuestActions()
-        local buttons = {
-            {
-                {
-                    text = _("Complete Quest"),
-                    callback = function()
-                        UIManager:close(self.action_dialog)
-                        Timeline:showQuestPicker("complete")
-                    end,
-                },
-            },
-            {
-                {
-                    text = _("View by Date"),
-                    callback = function()
-                        UIManager:close(self.action_dialog)
-                        Timeline:showDatePicker()
-                    end,
-                },
-            },
-            {
-                {
-                    text = _("Close"),
-                    callback = function()
-                        UIManager:close(self.action_dialog)
-                        UIManager:close(self)
-                    end,
+    UIManager:show(self.timeline_widget)
+end
+
+--[[--
+Setup tap handlers for quest items.
+--]]
+function Timeline:setupQuestTapHandlers()
+    -- Quest items start after header (approximately Y = 100)
+    local quest_y = 100
+    local quest_height = TOUCH_TARGET_HEIGHT + Size.padding.small
+
+    for idx, quest_info in ipairs(self.quest_touch_areas) do
+        local gesture_name = "QuestTap_" .. idx
+        self.timeline_widget.ges_events[gesture_name] = {
+            GestureRange:new{
+                ges = "tap",
+                range = Geom:new{
+                    x = Size.padding.large,
+                    y = quest_y + (idx - 1) * quest_height,
+                    w = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2,
+                    h = quest_height,
                 },
             },
         }
 
-        self.action_dialog = ButtonDialog:new{
-            buttons = buttons,
-        }
-        UIManager:show(self.action_dialog)
+        local timeline = self
+        local quest = quest_info.quest
+        self.timeline_widget["on" .. gesture_name] = function()
+            timeline:showQuestActions(quest)
+            return true
+        end
+    end
+end
+
+--[[--
+Show actions for a quest.
+--]]
+function Timeline:showQuestActions(quest)
+    local complete_text = quest.completed and _("Mark Incomplete") or _("Mark Complete")
+
+    local buttons = {
+        {{
+            text = complete_text,
+            callback = function()
+                UIManager:close(self.action_dialog)
+                self:toggleQuestComplete(quest)
+            end,
+        }},
+        {{
+            text = _("Cancel"),
+            callback = function()
+                UIManager:close(self.action_dialog)
+            end,
+        }},
+    }
+
+    self.action_dialog = ButtonDialog:new{
+        title = quest.title,
+        buttons = buttons,
+    }
+    UIManager:show(self.action_dialog)
+end
+
+--[[--
+Toggle quest completion.
+--]]
+function Timeline:toggleQuestComplete(quest)
+    -- Find quest type
+    local all_quests = Data:loadAllQuests()
+    local quest_type = nil
+
+    for qtype, quests in pairs(all_quests) do
+        for _, q in ipairs(quests) do
+            if q.id == quest.id then
+                quest_type = qtype
+                break
+            end
+        end
+        if quest_type then break end
     end
 
-    self.timeline_widget = container
-    UIManager:show(container)
+    if quest_type then
+        if quest.completed then
+            Data:uncompleteQuest(quest_type, quest.id)
+        else
+            Data:completeQuest(quest_type, quest.id)
+        end
+
+        -- Refresh timeline
+        if self.timeline_widget then
+            UIManager:close(self.timeline_widget)
+        end
+        self:showTimelineView()
+    end
 end
 
 --[[--
 Get all quests that should appear today.
-Includes daily quests, weekly quests (on their days), monthly quests (on their days).
 --]]
 function Timeline:getTodayQuests()
     local all_quests = Data:loadAllQuests()
+    if not all_quests then return {} end
+
     local today_quests = {}
-    local today = os.date("*t")
-    local day_of_week = today.wday  -- 1=Sunday, 7=Saturday
-    local day_of_month = today.day
 
     -- Daily quests - always show
     for _, quest in ipairs(all_quests.daily or {}) do
-        if not quest.completed then
-            table.insert(today_quests, quest)
-        end
+        table.insert(today_quests, quest)
     end
 
-    -- Weekly quests - show on configured days (or all days if not configured)
+    -- Weekly quests
     for _, quest in ipairs(all_quests.weekly or {}) do
-        if not quest.completed then
-            -- For simplicity, show all weekly quests (can add day filtering later)
-            table.insert(today_quests, quest)
-        end
+        table.insert(today_quests, quest)
     end
 
-    -- Monthly quests - show on configured days (or all days if not configured)
+    -- Monthly quests
     for _, quest in ipairs(all_quests.monthly or {}) do
-        if not quest.completed then
-            -- For simplicity, show all monthly quests (can add day filtering later)
-            table.insert(today_quests, quest)
-        end
-    end
-
-    -- Also check for completed quests today (to show them crossed off)
-    local today_date = os.date("%Y-%m-%d")
-    for quest_type, quests in pairs(all_quests) do
-        for _, quest in ipairs(quests) do
-            if quest.completed and quest.completed_date == today_date then
-                -- Already in list or add
-                local found = false
-                for _, tq in ipairs(today_quests) do
-                    if tq.id == quest.id then
-                        found = true
-                        break
-                    end
-                end
-                if not found then
-                    table.insert(today_quests, quest)
-                end
-            end
-        end
+        table.insert(today_quests, quest)
     end
 
     return today_quests
@@ -267,95 +340,6 @@ function Timeline:getQuestsForSlot(quests, slot)
         end
     end
     return slot_quests
-end
-
---[[--
-Show picker to select a quest to complete.
---]]
-function Timeline:showQuestPicker(action)
-    local today_quests = self:getTodayQuests()
-    local incomplete = {}
-
-    for _, quest in ipairs(today_quests) do
-        if not quest.completed then
-            table.insert(incomplete, quest)
-        end
-    end
-
-    if #incomplete == 0 then
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{
-            text = _("All quests completed! 🎉"),
-        })
-        return
-    end
-
-    local buttons = {}
-    for _, quest in ipairs(incomplete) do
-        table.insert(buttons, {
-            {
-                text = quest.title,
-                callback = function()
-                    UIManager:close(self.picker_dialog)
-                    self:completeQuest(quest)
-                end,
-            },
-        })
-    end
-
-    table.insert(buttons, {
-        {
-            text = _("Cancel"),
-            callback = function()
-                UIManager:close(self.picker_dialog)
-            end,
-        },
-    })
-
-    self.picker_dialog = ButtonDialog:new{
-        title = _("Select Quest to Complete"),
-        buttons = buttons,
-    }
-    UIManager:show(self.picker_dialog)
-end
-
---[[--
-Complete a quest and refresh the timeline.
---]]
-function Timeline:completeQuest(quest)
-    -- Determine quest type
-    local all_quests = Data:loadAllQuests()
-    local quest_type = nil
-
-    for qtype, quests in pairs(all_quests) do
-        for _, q in ipairs(quests) do
-            if q.id == quest.id then
-                quest_type = qtype
-                break
-            end
-        end
-        if quest_type then break end
-    end
-
-    if quest_type then
-        Data:completeQuest(quest_type, quest.id)
-
-        -- Refresh timeline
-        if self.timeline_widget then
-            UIManager:close(self.timeline_widget)
-        end
-        self:showTimelineView()
-    end
-end
-
---[[--
-Show date picker to view timeline for a different date.
---]]
-function Timeline:showDatePicker()
-    local InfoMessage = require("ui/widget/infomessage")
-    UIManager:show(InfoMessage:new{
-        text = _("Date navigation coming soon.\nCurrently showing today's timeline."),
-    })
 end
 
 return Timeline

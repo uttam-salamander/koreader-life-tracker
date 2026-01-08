@@ -4,6 +4,7 @@ GitHub-style contribution heatmap for quest completion visualization.
 @module lifetracker.heatmap
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
 local Font = require("ui/font")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
@@ -152,7 +153,7 @@ function Heatmap:buildWidget(weeks, use_ascii)
     table.insert(content, TextWidget:new{
         text = legend,
         face = Font:getFace("cfont", 10),
-        fgcolor = 0x666666,
+        fgcolor = Blitbuffer.gray(0.4),
     })
 
     return content
