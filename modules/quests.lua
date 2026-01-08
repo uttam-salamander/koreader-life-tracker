@@ -296,6 +296,9 @@ function Quests:toggleQuestComplete(quest)
         end
         Data:saveAllQuests(quests)
 
+        -- Update daily log for analytics
+        self:updateDailyLog()
+
         -- Update global streak
         self:updateGlobalStreak()
 
@@ -335,6 +338,40 @@ function Quests:updateGlobalStreak()
 
     user_settings.streak_data.last_completed_date = today
     Data:saveUserSettings(user_settings)
+end
+
+--[[--
+Update daily log with quest completion stats.
+This enables the heatmap and journal analytics.
+--]]
+function Quests:updateDailyLog()
+    local today = Data:getCurrentDate()
+    local quests = Data:loadAllQuests()
+    local logs = Data:loadDailyLogs()
+
+    -- Count today's quests
+    local total = 0
+    local completed = 0
+
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
+            -- Count quests that should appear today
+            -- For simplicity, count all active quests
+            total = total + 1
+            if quest.completed and quest.completed_date == today then
+                completed = completed + 1
+            end
+        end
+    end
+
+    -- Update or create log entry
+    if not logs[today] then
+        logs[today] = {}
+    end
+    logs[today].quests_total = total
+    logs[today].quests_completed = completed
+
+    Data:saveDailyLogs(logs)
 end
 
 --[[--

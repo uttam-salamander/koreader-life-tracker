@@ -118,9 +118,15 @@ function Data:saveAllQuests(quests)
     q:flush()
 end
 
+function Data:generateUniqueId()
+    -- Use timestamp + random number to prevent ID collisions
+    -- when multiple items are created within the same second
+    return os.time() * 1000 + math.random(0, 999)
+end
+
 function Data:addQuest(quest_type, quest)
     local quests = self:loadAllQuests()
-    quest.id = os.time()
+    quest.id = self:generateUniqueId()
     quest.created = os.date("%Y-%m-%d")
     quest.completed = false
     quest.completed_date = nil
@@ -225,7 +231,7 @@ end
 
 function Data:addReminder(reminder)
     local reminders = self:loadReminders()
-    reminder.id = os.time()
+    reminder.id = self:generateUniqueId()
     reminder.active = true
     reminder.last_triggered = nil
     table.insert(reminders, reminder)

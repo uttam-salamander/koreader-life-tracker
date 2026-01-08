@@ -26,6 +26,7 @@ local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingSt
 local LifeTracker = WidgetContainer:extend{
     name = "lifetracker",
     is_doc_only = false,
+    reminder_timer_active = false,  -- Track if timer is running
 }
 
 function LifeTracker:init()
@@ -35,8 +36,8 @@ function LifeTracker:init()
     -- Start reminder check timer
     self:scheduleReminderCheck()
 
-    -- Register for screensaver/lock screen events
-    self:registerScreensaverCallback()
+    -- Seed random number generator for unique ID generation
+    math.randomseed(os.time())
 end
 
 function LifeTracker:onDispatcherRegisterActions()
@@ -193,10 +194,28 @@ Schedule periodic reminder checks.
 Checks every minute for due reminders.
 --]]
 function LifeTracker:scheduleReminderCheck()
+    if self.reminder_timer_active then
+        return  -- Already scheduled
+    end
+    self.reminder_timer_active = true
+    self:doReminderCheck()
+end
+
+function LifeTracker:doReminderCheck()
+    if not self.reminder_timer_active then
+        return  -- Timer was stopped
+    end
+
+    self:checkReminders()
+
+    -- Schedule next check (60 seconds)
     UIManager:scheduleIn(60, function()
-        self:checkReminders()
-        self:scheduleReminderCheck()  -- Reschedule
+        self:doReminderCheck()
     end)
+end
+
+function LifeTracker:stopReminderCheck()
+    self.reminder_timer_active = false
 end
 
 --[[--
@@ -214,31 +233,8 @@ function LifeTracker:checkReminders()
 end
 
 --[[--
-Register callback for screensaver/lock screen events.
-When enabled, shows dashboard as lock screen.
---]]
-function LifeTracker:registerScreensaverCallback()
-    -- Check if lock screen dashboard is enabled in settings
-    local settings = self:getData():loadSettings()
-    if not settings.lock_screen_dashboard then
-        return
-    end
-
-    -- Register for suspend/resume events
-    -- Note: Implementation depends on KOReader's event system
-    -- This is a simplified version that may need adjustment
-    if self.ui and self.ui.event_listener then
-        self.ui:registerEvent("Suspend", function()
-            self:onSuspend()
-        end)
-        self.ui:registerEvent("Resume", function()
-            self:onResume()
-        end)
-    end
-end
-
---[[--
 Handle suspend event (device going to sleep).
+KOReader calls this automatically on WidgetContainer plugins.
 --]]
 function LifeTracker:onSuspend()
     -- Log reading stats before suspend
@@ -247,11 +243,12 @@ end
 
 --[[--
 Handle resume event (device waking up).
+KOReader calls this automatically on WidgetContainer plugins.
 Shows dashboard as wake screen if enabled.
 --]]
 function LifeTracker:onResume()
-    local settings = self:getData():loadSettings()
-    if settings.lock_screen_dashboard then
+    local settings = self:getData():loadUserSettings()
+    if settings and settings.lock_screen_dashboard then
         -- Small delay to let KOReader finish resuming
         UIManager:scheduleIn(0.5, function()
             self:showDashboard()
@@ -277,6 +274,14 @@ function LifeTracker:onFlushSettings()
     -- Flush all data
     local data = self:getData()
     data:flushAll()
+end
+
+--[[--
+Called when plugin is disabled or KOReader exits.
+Clean up timer to prevent memory leak.
+--]]
+function LifeTracker:onCloseWidget()
+    self:stopReminderCheck()
 end
 
 return LifeTracker

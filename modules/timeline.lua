@@ -49,8 +49,8 @@ function Timeline:showTimelineView()
     table.insert(content, VerticalSpan:new{ width = Size.span.vertical_large })
 
     -- Get settings and quests
-    local settings = Data:loadSettings()
-    local time_slots = settings.time_slots or {"Morning", "Afternoon", "Evening", "Night"}
+    local settings = Data:loadUserSettings()
+    local time_slots = (settings and settings.time_slots) or {"Morning", "Afternoon", "Evening", "Night"}
     local today_quests = self:getTodayQuests()
 
     -- Track completion stats
