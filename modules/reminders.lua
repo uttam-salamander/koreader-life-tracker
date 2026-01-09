@@ -21,6 +21,7 @@ local InputDialog = require("ui/widget/inputdialog")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
@@ -215,14 +216,23 @@ function Reminders:showRemindersView()
     }
     table.insert(content, add_button)
 
-    -- Wrap content
+    -- Wrap content in scrollable container
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local scroll_height = screen_height - Size.padding.large * 2
+
+    local scrollable_content = ScrollableContainer:new{
+        dimen = Geom:new{ w = scroll_width, h = scroll_height },
+        show_parent = self,
+        content,
+    }
+
     local padded_content = FrameContainer:new{
         width = screen_width - Navigation.TAB_WIDTH,
         height = screen_height,
         padding = Size.padding.large,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        content,
+        scrollable_content,
     }
 
     -- Navigation setup

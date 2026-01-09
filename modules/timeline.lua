@@ -21,6 +21,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
@@ -94,6 +95,7 @@ function Timeline:navigateDay(offset)
         UIManager:close(self.timeline_widget)
     end
     self:showTimelineView()
+    UIManager:setDirty("all", "ui")
 end
 
 --[[--
@@ -118,6 +120,7 @@ function Timeline:showDatePicker()
                 UIManager:close(self.timeline_widget)
             end
             self:showTimelineView()
+            UIManager:setDirty("all", "ui")
         end
     }
     UIManager:show(date_widget)
@@ -137,7 +140,7 @@ function Timeline:showTimelineView()
 
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Header with date and navigation (in top zone - visual only, gestures below)
+    -- Header title (in top zone - non-interactive)
     local is_today = self.view_date == os.date("%Y-%m-%d")
     local view_time = os.time({
         year = tonumber(self.view_date:sub(1,4)) or 2025,
@@ -145,41 +148,57 @@ function Timeline:showTimelineView()
         day = tonumber(self.view_date:sub(9,10)) or 1
     })
     local display_date = os.date("%A, %B %d", view_time)
-    local header_text = is_today and ("TODAY") or display_date
+
+    table.insert(content, TextWidget:new{
+        text = _("Timeline"),
+        face = Font:getFace("tfont", 18),
+        bold = true,
+    })
+
+    -- Add spacer to push interactive content below top_safe_zone
+    local header_height = 24
+    local spacer_needed = top_safe_zone - Size.padding.large - header_height
+    if spacer_needed > 0 then
+        table.insert(content, VerticalSpan:new{ width = spacer_needed })
+    end
+
+    -- === INTERACTIVE AREA STARTS HERE (below top_safe_zone) ===
+    self.current_y = top_safe_zone
 
     -- Date navigation row: [<] [DATE] [>]
-    local NAV_BUTTON_WIDTH = 40
-    local date_width = content_width - NAV_BUTTON_WIDTH * 2 - Size.padding.small * 2
+    local NAV_BUTTON_WIDTH = 44
+    local date_width = content_width - NAV_BUTTON_WIDTH * 2 - Size.padding.small * 4
 
     -- Previous day button
     local prev_button = FrameContainer:new{
         width = NAV_BUTTON_WIDTH,
         height = TOUCH_TARGET_HEIGHT,
         padding = Size.padding.small,
-        bordersize = 1,
+        bordersize = 2,
         background = Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
             dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
             TextWidget:new{
-                text = "<",
-                face = Font:getFace("tfont", 20),
+                text = "◀",
+                face = Font:getFace("tfont", 18),
                 bold = true,
             },
         },
     }
 
     -- Date display (tappable to open date picker)
+    local header_text = is_today and ("TODAY - " .. display_date) or display_date
     local date_display = FrameContainer:new{
         width = date_width,
         height = TOUCH_TARGET_HEIGHT,
         padding = Size.padding.small,
         bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
+        background = is_today and Blitbuffer.gray(0.95) or Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
             dimen = Geom:new{w = date_width - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
             TextWidget:new{
                 text = header_text,
-                face = Font:getFace("tfont", 16),
+                face = Font:getFace("cfont", 14),
                 bold = is_today,
             },
         },
@@ -190,13 +209,13 @@ function Timeline:showTimelineView()
         width = NAV_BUTTON_WIDTH,
         height = TOUCH_TARGET_HEIGHT,
         padding = Size.padding.small,
-        bordersize = 1,
+        bordersize = 2,
         background = Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
             dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
             TextWidget:new{
-                text = ">",
-                face = Font:getFace("tfont", 20),
+                text = "▶",
+                face = Font:getFace("tfont", 18),
                 bold = true,
             },
         },
@@ -210,8 +229,9 @@ function Timeline:showTimelineView()
     table.insert(nav_row, next_button)
 
     table.insert(content, nav_row)
+    self.current_y = self.current_y + TOUCH_TARGET_HEIGHT
 
-    -- Store nav button positions for tap handling
+    -- Store nav button positions for tap handling (relative to content start)
     self.nav_button_x = {
         prev_start = Size.padding.large,
         prev_end = Size.padding.large + NAV_BUTTON_WIDTH,
@@ -222,24 +242,10 @@ function Timeline:showTimelineView()
     }
     self.nav_button_width = NAV_BUTTON_WIDTH
     self.date_display_width = date_width
+    self.nav_row_y = top_safe_zone  -- Y position of nav row (below top zone)
 
-    -- Tap hint
-    table.insert(content, TextWidget:new{
-        text = _("Tap date to pick • Swipe to navigate"),
-        face = Font:getFace("cfont", 11),
-        fgcolor = Blitbuffer.gray(0.5),
-    })
-
-    -- Add spacer to push interactive content below top_safe_zone
-    local header_height = 50  -- Header + nav hint
-    local spacer_needed = top_safe_zone - Size.padding.large - header_height
-    if spacer_needed > 0 then
-        table.insert(content, VerticalSpan:new{ width = spacer_needed })
-    end
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
-
-    -- All interactive content starts here (below top_safe_zone)
-    self.current_y = top_safe_zone + Size.padding.small
+    self.current_y = self.current_y + Size.padding.small
 
     -- Get settings and quests
     local settings = Data:loadUserSettings()
@@ -318,14 +324,23 @@ function Timeline:showTimelineView()
         bold = true,
     })
 
-    -- Wrap content in frame
+    -- Wrap content in scrollable container
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local scroll_height = screen_height - Size.padding.large * 2
+
+    local scrollable_content = ScrollableContainer:new{
+        dimen = Geom:new{ w = scroll_width, h = scroll_height },
+        show_parent = self,
+        content,
+    }
+
     local padded_content = FrameContainer:new{
         width = screen_width - Navigation.TAB_WIDTH,
         height = screen_height,
         padding = Size.padding.large,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        content,
+        scrollable_content,
     }
 
     -- Setup navigation
@@ -370,8 +385,8 @@ function Timeline:showTimelineView()
     self:setupQuestTapHandlers()
 
     -- Date navigation tap handlers
-    -- The nav row starts at top_safe_zone - header_height (approx)
-    local nav_row_y = Size.padding.large
+    -- Nav row is BELOW top_safe_zone to avoid corner gesture conflicts
+    local nav_row_y = self.nav_row_y
     local nav_row_height = TOUCH_TARGET_HEIGHT
 
     -- Previous day button tap
@@ -762,29 +777,51 @@ function Timeline:skipQuest(quest)
 end
 
 --[[--
-Get all quests that should appear on a specific date.
-@param _date_str Date in YYYY-MM-DD format (reserved for date-specific filtering)
+Get all quests that should appear on a specific date with correct completion status.
+@param date_str Date in YYYY-MM-DD format
+@treturn table List of quest copies with date-appropriate completion status
 --]]
-function Timeline:getQuestsForDate(_date_str)
+function Timeline:getQuestsForDate(date_str)
     local all_quests = Data:loadAllQuests()
     if not all_quests then return {} end
 
+    local today = os.date("%Y-%m-%d")
     local quests = {}
+
+    -- Helper to clone quest with date-appropriate completion status
+    local function cloneQuestForDate(quest)
+        local clone = {}
+        for k, v in pairs(quest) do
+            clone[k] = v
+        end
+
+        -- For past/future dates, check if completed_date matches view date
+        if date_str ~= today then
+            -- Only show completed if it was completed ON this date
+            if clone.completed and clone.completed_date == date_str then
+                clone.completed = true
+            else
+                clone.completed = false
+            end
+        end
+        -- For today: use current completion status as-is
+
+        return clone
+    end
 
     -- Daily quests - always show
     for _, quest in ipairs(all_quests.daily or {}) do
-        table.insert(quests, quest)
+        table.insert(quests, cloneQuestForDate(quest))
     end
 
     -- Weekly quests - show for all days
     for _, quest in ipairs(all_quests.weekly or {}) do
-        -- Show weekly quests for all days of the week
-        table.insert(quests, quest)
+        table.insert(quests, cloneQuestForDate(quest))
     end
 
-    -- Monthly quests - check if date is in the current month
+    -- Monthly quests
     for _, quest in ipairs(all_quests.monthly or {}) do
-        table.insert(quests, quest)
+        table.insert(quests, cloneQuestForDate(quest))
     end
 
     return quests

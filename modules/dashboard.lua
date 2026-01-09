@@ -19,7 +19,9 @@ local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
+local ProgressWidget = require("ui/widget/progresswidget")
 local RightContainer = require("ui/widget/container/rightcontainer")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
@@ -120,6 +122,32 @@ function Dashboard:getTimeBasedGreeting()
 end
 
 --[[--
+Get daily quest completion statistics.
+@treturn table {total, completed} counts for daily quests
+--]]
+function Dashboard:getDailyQuestStats()
+    local all_quests = Data:loadAllQuests()
+    if not all_quests or not all_quests.daily then
+        return { total = 0, completed = 0 }
+    end
+
+    local total = 0
+    local completed = 0
+    local today_energy = self.user_settings.today_energy
+
+    -- Filter by energy and count
+    local filtered = self:filterQuestsByEnergy(all_quests.daily, today_energy)
+    for _, quest in ipairs(filtered) do
+        total = total + 1
+        if quest.completed then
+            completed = completed + 1
+        end
+    end
+
+    return { total = total, completed = completed }
+end
+
+--[[--
 Set today's energy level and refresh dashboard.
 Also adds a timestamped mood entry for intra-day tracking.
 --]]
@@ -190,8 +218,34 @@ function Dashboard:showDashboardView()
     local energy_tabs = self:buildEnergyTabsVisual()
     table.insert(content, energy_tabs)
     self.current_y = self.current_y + ENERGY_TAB_HEIGHT
-    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
-    self.current_y = self.current_y + Size.padding.large
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    self.current_y = self.current_y + Size.padding.small
+
+    -- ===== Daily Progress Bar =====
+    local daily_stats = self:getDailyQuestStats()
+    local progress_pct = daily_stats.total > 0 and (daily_stats.completed / daily_stats.total) or 0
+
+    -- Progress label
+    table.insert(content, TextWidget:new{
+        text = string.format(_("Today's Progress: %d/%d"), daily_stats.completed, daily_stats.total),
+        face = Font:getFace("cfont", 13),
+        fgcolor = Blitbuffer.gray(0.3),
+    })
+    self.current_y = self.current_y + 18
+
+    -- Progress bar
+    local progress_height = Screen:scaleBySize(12)
+    local progress_bar = ProgressWidget:new{
+        width = content_width,
+        height = progress_height,
+        percentage = progress_pct,
+        ticks = nil,
+        last = nil,
+    }
+    table.insert(content, progress_bar)
+    self.current_y = self.current_y + progress_height
+    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+    self.current_y = self.current_y + Size.padding.default
 
     -- ===== Separator =====
     table.insert(content, LineWidget:new{
@@ -316,14 +370,24 @@ function Dashboard:showDashboardView()
         })
     end
 
-    -- ===== Wrap content in scrollable frame =====
+    -- ===== Wrap content in scrollable container =====
+    -- Calculate visible scroll area (inside padding)
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local scroll_height = screen_height - Size.padding.large * 2
+
+    local scrollable_content = ScrollableContainer:new{
+        dimen = Geom:new{ w = scroll_width, h = scroll_height },
+        show_parent = self,
+        content,
+    }
+
     local padded_content = FrameContainer:new{
         width = screen_width - Navigation.TAB_WIDTH,
         height = screen_height,
         padding = Size.padding.large,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        content,
+        scrollable_content,
     }
 
     -- ===== Create main container with gestures =====
