@@ -21,7 +21,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local _ = require("gettext")
 
 -- Plugin modules (lazy loaded)
-local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingStats
+local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingStats, Read
 
 local LifeTracker = WidgetContainer:extend{
     name = "lifetracker",
@@ -98,6 +98,12 @@ function LifeTracker:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = _("Reading"),
+                callback = function()
+                    self:showRead()
+                end,
+            },
+            {
                 text = "─────────────",
                 enabled = false,
             },
@@ -168,6 +174,13 @@ function LifeTracker:showJournal()
         Journal = require("modules/journal")
     end
     Journal:show(self.ui)
+end
+
+function LifeTracker:showRead()
+    if not Read then
+        Read = require("modules/read")
+    end
+    Read:show(self.ui)
 end
 
 function LifeTracker:showSettings()

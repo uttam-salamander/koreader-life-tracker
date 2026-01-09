@@ -32,6 +32,7 @@ Navigation.TABS = {
     {id = "timeline",  label = "DAY", full = _("Timeline")},
     {id = "reminders", label = "ALARM", full = _("Reminders")},
     {id = "journal",   label = "LOG", full = _("Journal")},
+    {id = "read",      label = "READ", full = _("Reading")},
 }
 
 -- Tab width for the right sidebar (wider for better touch targets)
@@ -317,6 +318,7 @@ function Navigation:navigateTo(tab_id, ui)
         timeline = "modules/timeline",
         reminders = "modules/reminders",
         journal = "modules/journal",
+        read = "modules/read",
     }
 
     local module_path = module_map[tab_id]

@@ -8,6 +8,226 @@ local Data = require("modules/data")
 
 local ReadingStats = {}
 
+-- Cache for database connection
+local stats_db = nil
+
+--[[--
+Get the statistics database connection.
+@return SQ3 database connection or nil
+--]]
+function ReadingStats:getStatsDB()
+    if stats_db then
+        return stats_db
+    end
+
+    -- Try to open the statistics database
+    local ok, SQ3 = pcall(require, "lua-ljsqlite3/init")
+    if not ok then
+        return nil
+    end
+
+    local ok2, DataStorage = pcall(require, "datastorage")
+    if not ok2 then
+        return nil
+    end
+
+    local db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
+
+    local open_ok, db = pcall(function()
+        return SQ3.open(db_path)
+    end)
+
+    if open_ok and db then
+        stats_db = db
+        return stats_db
+    end
+
+    return nil
+end
+
+--[[--
+Get total reading statistics from KOReader's database.
+@return table with total_books, total_pages, total_time
+--]]
+function ReadingStats:getTotalReadingStats()
+    local stats = {
+        total_books = 0,
+        total_pages = 0,
+        total_time = 0,
+    }
+
+    local db = self:getStatsDB()
+    if not db then
+        return stats
+    end
+
+    local ok, result = pcall(function()
+        local sql = [[
+            SELECT
+                COUNT(*) as total_books,
+                COALESCE(SUM(total_read_pages), 0) as total_pages,
+                COALESCE(SUM(total_read_time), 0) as total_time
+            FROM book
+            WHERE total_read_time > 0
+        ]]
+        return db:exec(sql)
+    end)
+
+    if ok and result then
+        -- lua-ljsqlite3 returns column-based arrays
+        stats.total_books = tonumber(result.total_books and result.total_books[1]) or 0
+        stats.total_pages = tonumber(result.total_pages and result.total_pages[1]) or 0
+        stats.total_time = tonumber(result.total_time and result.total_time[1]) or 0
+    end
+
+    return stats
+end
+
+--[[--
+Get recently read books from KOReader's statistics database.
+@param limit Maximum number of books to return
+@return table Array of book info
+--]]
+function ReadingStats:getRecentBooksFromDB(limit)
+    limit = limit or 12
+    local books = {}
+
+    local db = self:getStatsDB()
+    if not db then
+        return books
+    end
+
+    local ok, result = pcall(function()
+        local sql = string.format([[
+            SELECT
+                id,
+                title,
+                authors,
+                pages,
+                total_read_pages,
+                total_read_time,
+                last_open,
+                md5
+            FROM book
+            WHERE last_open > 0
+            ORDER BY last_open DESC
+            LIMIT %d
+        ]], limit)
+        return db:exec(sql)
+    end)
+
+    if ok and result then
+        -- lua-ljsqlite3 returns column-based arrays, need to iterate by index
+        local num_rows = result.title and #result.title or 0
+        for i = 1, num_rows do
+            local title = result.title and result.title[i]
+            -- Skip books with empty or nil titles
+            if title and title ~= "" then
+                local total_pages = tonumber(result.pages and result.pages[i]) or 0
+                local read_pages = tonumber(result.total_read_pages and result.total_read_pages[i]) or 0
+                local progress = 0
+                if total_pages > 0 then
+                    progress = read_pages / total_pages
+                end
+
+                table.insert(books, {
+                    id = result.id and result.id[i],
+                    title = title,
+                    authors = result.authors and result.authors[i],
+                    pages = total_pages,
+                    pages_read = read_pages,
+                    total_time = tonumber(result.total_read_time and result.total_read_time[i]) or 0,
+                    last_open = tonumber(result.last_open and result.last_open[i]) or 0,
+                    progress = progress,
+                    md5 = result.md5 and result.md5[i],
+                })
+            end
+        end
+    end
+
+    return books
+end
+
+--[[--
+Get reading stats for today from the database.
+@return table with pages and time for today
+--]]
+function ReadingStats:getTodayStatsFromDB()
+    local stats = {
+        pages = 0,
+        time = 0,
+    }
+
+    local db = self:getStatsDB()
+    if not db then
+        return stats
+    end
+
+    -- Get start of today (midnight)
+    local today = os.date("*t")
+    today.hour = 0
+    today.min = 0
+    today.sec = 0
+    local today_start = os.time(today)
+
+    local ok, result = pcall(function()
+        local sql = string.format([[
+            SELECT
+                COUNT(DISTINCT page) as pages,
+                COALESCE(SUM(duration), 0) as time
+            FROM page_stat_data
+            WHERE start_time >= %d
+        ]], today_start)
+        return db:exec(sql)
+    end)
+
+    if ok and result then
+        -- lua-ljsqlite3 returns column-based arrays
+        stats.pages = tonumber(result.pages and result.pages[1]) or 0
+        stats.time = tonumber(result.time and result.time[1]) or 0
+    end
+
+    return stats
+end
+
+--[[--
+Get reading stats for this week from the database.
+@return table with pages and time for this week
+--]]
+function ReadingStats:getWeekStatsFromDB()
+    local stats = {
+        pages = 0,
+        time = 0,
+    }
+
+    local db = self:getStatsDB()
+    if not db then
+        return stats
+    end
+
+    -- Get start of 7 days ago
+    local week_ago = os.time() - (7 * 24 * 60 * 60)
+
+    local ok, result = pcall(function()
+        local sql = string.format([[
+            SELECT
+                COUNT(DISTINCT page) as pages,
+                COALESCE(SUM(duration), 0) as time
+            FROM page_stat_data
+            WHERE start_time >= %d
+        ]], week_ago)
+        return db:exec(sql)
+    end)
+
+    if ok and result then
+        -- lua-ljsqlite3 returns column-based arrays
+        stats.pages = tonumber(result.pages and result.pages[1]) or 0
+        stats.time = tonumber(result.time and result.time[1]) or 0
+    end
+
+    return stats
+end
+
 --[[--
 Get today's reading statistics from KOReader.
 @param ui The KOReader UI instance
