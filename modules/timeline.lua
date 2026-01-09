@@ -538,73 +538,189 @@ function Timeline:showTimelineView()
     UIManager:show(self.timeline_widget)
 end
 
+-- UI Constants for progressive quests
+local SMALL_BUTTON_WIDTH = 35
+local PROGRESS_WIDTH = 60
+
 --[[--
-Build a single quest row with OK/Skip buttons (matches Dashboard style).
+Build a single quest row with OK/Skip buttons (binary) or +/-/Skip buttons (progressive).
 --]]
 function Timeline:buildQuestRow(quest, content_width)
-    local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
-
+    local today = os.date("%Y-%m-%d")
     local status_bg = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE
     local text_color = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
 
-    -- Quest title
-    local title_widget = TextWidget:new{
-        text = quest.title,
-        face = Font:getFace("cfont", 14),
-        fgcolor = text_color,
-        max_width = title_width - Size.padding.small * 2,
-    }
+    -- Check if progressive quest needs daily reset
+    if quest.is_progressive and quest.progress_last_date ~= today then
+        quest.progress_current = 0
+    end
 
-    -- Complete button (OK or X if already completed)
-    local complete_text = quest.completed and "X" or "OK"
-    local complete_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = TOUCH_TARGET_HEIGHT - 4,
-        padding = 2,
-        bordersize = 1,
-        background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
-            TextWidget:new{
-                text = complete_text,
-                face = Font:getFace("cfont", 12),
-                bold = true,
+    local row
+
+    if quest.is_progressive then
+        -- Progressive quest layout: [−] [3/10] [+] [Skip] [Title]
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - BUTTON_WIDTH - 6 - Size.padding.small
+
+        local title_widget = TextWidget:new{
+            text = quest.title,
+            face = Font:getFace("cfont", 13),
+            fgcolor = text_color,
+            max_width = title_width - Size.padding.small * 2,
+        }
+
+        -- Minus button
+        local minus_button = FrameContainer:new{
+            width = SMALL_BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "−",
+                    face = Font:getFace("cfont", 16),
+                    bold = true,
+                },
             },
-        },
-    }
+        }
 
-    -- Skip button
-    local skip_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = TOUCH_TARGET_HEIGHT - 4,
-        padding = 2,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
-            TextWidget:new{
-                text = "Skip",
-                face = Font:getFace("cfont", 10),
+        -- Progress display
+        local current = quest.progress_current or 0
+        local target = quest.progress_target or 1
+        local pct = math.min(1, current / target)
+        local progress_bg = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
+        local progress_text = string.format("%d/%d", current, target)
+
+        local progress_display = FrameContainer:new{
+            width = PROGRESS_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = progress_bg,
+            CenterContainer:new{
+                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = progress_text,
+                    face = Font:getFace("cfont", 11),
+                    bold = quest.completed,
+                },
             },
-        },
-    }
+        }
 
-    -- Put buttons on LEFT for easier tapping, then title
-    local row = HorizontalGroup:new{
-        align = "center",
-        complete_button,
-        HorizontalSpan:new{ width = 2 },
-        skip_button,
-        HorizontalSpan:new{ width = Size.padding.small },
-        FrameContainer:new{
-            width = title_width,
-            height = TOUCH_TARGET_HEIGHT,
-            padding = Size.padding.small,
-            bordersize = 0,
-            background = status_bg,
-            title_widget,
-        },
-    }
+        -- Plus button
+        local plus_button = FrameContainer:new{
+            width = SMALL_BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "+",
+                    face = Font:getFace("cfont", 16),
+                    bold = true,
+                },
+            },
+        }
+
+        -- Skip button for progressive quests
+        local skip_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "Skip",
+                    face = Font:getFace("cfont", 10),
+                },
+            },
+        }
+
+        row = HorizontalGroup:new{
+            align = "center",
+            minus_button,
+            HorizontalSpan:new{ width = 2 },
+            progress_display,
+            HorizontalSpan:new{ width = 2 },
+            plus_button,
+            HorizontalSpan:new{ width = 2 },
+            skip_button,
+            HorizontalSpan:new{ width = Size.padding.small },
+            FrameContainer:new{
+                width = title_width,
+                height = TOUCH_TARGET_HEIGHT,
+                padding = Size.padding.small,
+                bordersize = 0,
+                background = status_bg,
+                title_widget,
+            },
+        }
+    else
+        -- Binary quest layout: [OK] [Skip] [Title]
+        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
+
+        local title_widget = TextWidget:new{
+            text = quest.title,
+            face = Font:getFace("cfont", 14),
+            fgcolor = text_color,
+            max_width = title_width - Size.padding.small * 2,
+        }
+
+        -- Complete button (OK or X if already completed)
+        local complete_text = quest.completed and "X" or "OK"
+        local complete_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = complete_text,
+                    face = Font:getFace("cfont", 12),
+                    bold = true,
+                },
+            },
+        }
+
+        -- Skip button
+        local skip_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "Skip",
+                    face = Font:getFace("cfont", 10),
+                },
+            },
+        }
+
+        row = HorizontalGroup:new{
+            align = "center",
+            complete_button,
+            HorizontalSpan:new{ width = 2 },
+            skip_button,
+            HorizontalSpan:new{ width = Size.padding.small },
+            FrameContainer:new{
+                width = title_width,
+                height = TOUCH_TARGET_HEIGHT,
+                padding = Size.padding.small,
+                bordersize = 0,
+                background = status_bg,
+                title_widget,
+            },
+        }
+    end
 
     return FrameContainer:new{
         width = content_width,
@@ -618,7 +734,7 @@ end
 
 --[[--
 Setup tap handlers for quest items.
-Uses same percentage-based detection as Dashboard.
+Handles both binary (OK/Skip) and progressive (+/-/Skip) quest layouts.
 --]]
 function Timeline:setupQuestTapHandlers()
     local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
@@ -644,19 +760,41 @@ function Timeline:setupQuestTapHandlers()
         local quest = quest_info.quest
 
         self.timeline_widget["on" .. row_gesture] = function(_, _, ges)
-            -- Buttons are on LEFT: OK (0-11%), Skip (11-22%), Title (22%+)
             local tap_x = ges.pos.x - Size.padding.large
-            local tap_percent = tap_x / content_width
 
-            if tap_percent < 0.11 then
-                -- Leftmost ~11% = OK button
-                timeline:toggleQuestComplete(quest)
-            elseif tap_percent < 0.22 then
-                -- Next ~11% = Skip button
-                timeline:skipQuest(quest)
+            if quest.is_progressive then
+                -- Progressive quest layout: [−](35) [progress](60) [+](35) [Skip](50) [Title]
+                -- Positions: 0-35, 37-97, 99-134, 136-186, 186+
+                if tap_x < SMALL_BUTTON_WIDTH then
+                    -- Minus button
+                    timeline:decrementQuestProgress(quest)
+                elseif tap_x < SMALL_BUTTON_WIDTH + 2 + PROGRESS_WIDTH then
+                    -- Progress display - show manual input
+                    timeline:showProgressInput(quest)
+                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 4 + PROGRESS_WIDTH then
+                    -- Plus button
+                    timeline:incrementQuestProgress(quest)
+                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 6 + PROGRESS_WIDTH + BUTTON_WIDTH then
+                    -- Skip button
+                    timeline:skipQuest(quest)
+                else
+                    -- Title area
+                    timeline:showQuestActions(quest)
+                end
             else
-                -- Right 78% = Title area
-                timeline:showQuestActions(quest)
+                -- Binary quest: Buttons are on LEFT: OK (0-11%), Skip (11-22%), Title (22%+)
+                local tap_percent = tap_x / content_width
+
+                if tap_percent < 0.11 then
+                    -- Leftmost ~11% = OK button
+                    timeline:toggleQuestComplete(quest)
+                elseif tap_percent < 0.22 then
+                    -- Next ~11% = Skip button
+                    timeline:skipQuest(quest)
+                else
+                    -- Right 78% = Title area
+                    timeline:showQuestActions(quest)
+                end
             end
             return true
         end
@@ -778,6 +916,142 @@ function Timeline:skipQuest(quest)
             })
         end)
     end
+end
+
+--[[--
+Increment progress for a progressive quest.
+--]]
+function Timeline:incrementQuestProgress(quest)
+    -- Find quest type
+    local all_quests = Data:loadAllQuests()
+    local quest_type = nil
+
+    for qtype, quests in pairs(all_quests) do
+        for _, q in ipairs(quests) do
+            if q.id == quest.id then
+                quest_type = qtype
+                break
+            end
+        end
+        if quest_type then break end
+    end
+
+    if quest_type then
+        local updated = Data:incrementQuestProgress(quest_type, quest.id)
+        if updated then
+            -- Refresh timeline
+            if self.timeline_widget then
+                UIManager:close(self.timeline_widget)
+            end
+            self:showTimelineView()
+            UIManager:setDirty("all", "ui")
+
+            if updated.completed then
+                UIManager:nextTick(function()
+                    UIManager:show(InfoMessage:new{
+                        text = _("Quest completed!"),
+                        timeout = 1,
+                    })
+                end)
+            end
+        end
+    end
+end
+
+--[[--
+Decrement progress for a progressive quest.
+--]]
+function Timeline:decrementQuestProgress(quest)
+    -- Find quest type
+    local all_quests = Data:loadAllQuests()
+    local quest_type = nil
+
+    for qtype, quests in pairs(all_quests) do
+        for _, q in ipairs(quests) do
+            if q.id == quest.id then
+                quest_type = qtype
+                break
+            end
+        end
+        if quest_type then break end
+    end
+
+    if quest_type then
+        local updated = Data:decrementQuestProgress(quest_type, quest.id)
+        if updated then
+            -- Refresh timeline
+            if self.timeline_widget then
+                UIManager:close(self.timeline_widget)
+            end
+            self:showTimelineView()
+            UIManager:setDirty("all", "ui")
+        end
+    end
+end
+
+--[[--
+Show input dialog for manually setting progress.
+--]]
+function Timeline:showProgressInput(quest)
+    -- Find quest type
+    local all_quests = Data:loadAllQuests()
+    local quest_type = nil
+
+    for qtype, quests in pairs(all_quests) do
+        for _, q in ipairs(quests) do
+            if q.id == quest.id then
+                quest_type = qtype
+                break
+            end
+        end
+        if quest_type then break end
+    end
+
+    if not quest_type then return end
+
+    local InputDialog = require("ui/widget/inputdialog")
+    local dialog
+    dialog = InputDialog:new{
+        title = string.format(_("Set Progress for '%s'"), quest.title),
+        input = tostring(quest.progress_current or 0),
+        input_hint = string.format(_("Target: %d %s"),
+            quest.progress_target or 1,
+            quest.progress_unit or ""),
+        input_type = "number",
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            },
+            {
+                text = _("Set"),
+                is_enter_default = true,
+                callback = function()
+                    local value = tonumber(dialog:getInputText())
+                    if value and value >= 0 then
+                        Data:setQuestProgress(quest_type, quest.id, value)
+                        UIManager:close(dialog)
+
+                        -- Refresh timeline
+                        if self.timeline_widget then
+                            UIManager:close(self.timeline_widget)
+                        end
+                        self:showTimelineView()
+                        UIManager:setDirty("all", "ui")
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a valid number"),
+                            timeout = 2,
+                        })
+                    end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 --[[--

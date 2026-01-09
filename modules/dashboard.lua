@@ -1371,21 +1371,23 @@ end
 
 --[[--
 Build dynamic heatmap with categories based on actual quest data.
-Renders in multiple rows if needed to fit content width.
+Uses larger font and spaced characters for e-ink readability.
 @param content_width number Available width in pixels
 --]]
 function Dashboard:buildDynamicHeatmap(content_width)
     local logs = Data:loadDailyLogs()
     local today = os.time()
-    local total_weeks = 12
+    local total_weeks = 8  -- Reduced from 12 for larger display
     local days_per_week = 7
 
-    -- Calculate how many weeks can fit per row
-    -- Block characters (░▒▓█) are wider than normal chars - roughly 18-20px each at font 12
-    -- To prevent horizontal scroll, we limit to 6 weeks per row max
-    local block_char_width = 20  -- Conservative estimate for block chars
-    local calculated_weeks = math.floor(content_width / block_char_width)
-    local weeks_per_row = math.max(4, math.min(calculated_weeks, 6))  -- Max 6 weeks per row
+    -- Larger font for e-ink readability
+    local HEATMAP_FONT_SIZE = 18
+    local LEGEND_FONT_SIZE = 14
+
+    -- Calculate how many weeks can fit per row with spaced characters
+    -- Each block char + space is roughly 24px at font 18
+    local char_width = 24
+    local weeks_per_row = math.max(4, math.min(math.floor(content_width / char_width), 8))
 
     -- Find the maximum completions in any day to set dynamic thresholds
     local max_completions = 0
@@ -1442,8 +1444,8 @@ function Dashboard:buildDynamicHeatmap(content_width)
             end
             table.insert(heatmap_group, TextWidget:new{
                 text = section_label,
-                face = Font:getFace("cfont", 9),
-                fgcolor = Blitbuffer.gray(0.5),
+                face = Font:getFace("cfont", 12),
+                fgcolor = Blitbuffer.gray(0.4),
             })
         end
 
@@ -1460,7 +1462,8 @@ function Dashboard:buildDynamicHeatmap(content_width)
                 if log and log.quests_completed then
                     count = log.quests_completed
                 end
-                row = row .. get_heat_char(count)
+                -- Add space after each character for better spacing
+                row = row .. get_heat_char(count) .. " "
             end
             table.insert(lines, row)
         end
@@ -1468,24 +1471,24 @@ function Dashboard:buildDynamicHeatmap(content_width)
         local heatmap_text = table.concat(lines, "\n")
         table.insert(heatmap_group, TextWidget:new{
             text = heatmap_text,
-            face = Font:getFace("cfont", 12),
+            face = Font:getFace("cfont", HEATMAP_FONT_SIZE),
             max_width = content_width,
         })
 
         -- Add spacing between sections
         if section < num_sections - 1 then
-            table.insert(heatmap_group, VerticalSpan:new{ width = Size.padding.small })
+            table.insert(heatmap_group, VerticalSpan:new{ width = Size.padding.default })
         end
     end
 
     table.insert(heatmap_group, VerticalSpan:new{ width = Size.padding.small })
 
-    -- Dynamic legend (compact to fit width)
-    local legend = string.format("░=0 ▒=1-%d ▓=%d-%d █=%d+", t1, t1+1, t2, t3)
+    -- Dynamic legend (larger for readability)
+    local legend = string.format("░ none  ▒ 1-%d  ▓ %d-%d  █ %d+", t1, t1+1, t2, t3)
     table.insert(heatmap_group, TextWidget:new{
         text = legend,
-        face = Font:getFace("cfont", 10),
-        fgcolor = Blitbuffer.gray(0.4),
+        face = Font:getFace("cfont", LEGEND_FONT_SIZE),
+        fgcolor = Blitbuffer.gray(0.3),
         max_width = content_width,
     })
 
