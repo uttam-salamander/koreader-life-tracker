@@ -274,6 +274,9 @@ function LifeTracker:onFlushSettings()
     -- Flush all data
     local data = self:getData()
     data:flushAll()
+
+    -- Create daily auto-backup (keeps last 7 days)
+    data:autoBackup(7)
 end
 
 --[[--

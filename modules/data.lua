@@ -85,6 +85,7 @@ function Data:loadUserSettings()
         },
         today_energy = s:readSetting("today_energy") or nil,
         today_date = s:readSetting("today_date") or nil,
+        lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
     }
 end
 
@@ -96,6 +97,7 @@ function Data:saveUserSettings(user_settings)
     s:saveSetting("streak_data", user_settings.streak_data)
     s:saveSetting("today_energy", user_settings.today_energy)
     s:saveSetting("today_date", user_settings.today_date)
+    s:saveSetting("lock_screen_dashboard", user_settings.lock_screen_dashboard)
     s:flush()
 end
 
@@ -518,6 +520,272 @@ function Data:flushAll()
     if quests_cache then quests_cache:flush() end
     if logs_cache then logs_cache:flush() end
     if reminders_cache then reminders_cache:flush() end
+end
+
+-- ============================================
+-- Backup & Restore Operations
+-- ============================================
+
+local BACKUP_VERSION = 1  -- Increment when backup format changes
+
+--[[--
+Get the backup directory path.
+@return string Path to backup directory
+--]]
+function Data:getBackupDir()
+    return DATA_DIR .. "/lifetracker_backups"
+end
+
+--[[--
+Ensure the backup directory exists.
+--]]
+function Data:ensureBackupDir()
+    local lfs = require("libs/libkoreader-lfs")
+    local backup_dir = self:getBackupDir()
+    if lfs.attributes(backup_dir, "mode") ~= "directory" then
+        lfs.mkdir(backup_dir)
+    end
+end
+
+--[[--
+Create a backup of all plugin data.
+@return table Backup data structure with all settings, quests, logs, and reminders
+--]]
+function Data:createBackup()
+    return {
+        version = BACKUP_VERSION,
+        created_at = os.date("%Y-%m-%d %H:%M:%S"),
+        timestamp = os.time(),
+        data = {
+            settings = self:loadUserSettings(),
+            persistent_notes = self:loadPersistentNotes(),
+            quests = self:loadAllQuests(),
+            logs = self:loadDailyLogs(),
+            reminders = self:loadReminders(),
+        }
+    }
+end
+
+--[[--
+Restore plugin data from a backup.
+@param backup table Backup data structure
+@return boolean, string Success status and message
+--]]
+function Data:restoreFromBackup(backup)
+    if not backup then
+        return false, "Invalid backup data"
+    end
+
+    if not backup.version then
+        return false, "Backup version not found"
+    end
+
+    if backup.version > BACKUP_VERSION then
+        return false, "Backup is from a newer version"
+    end
+
+    local data = backup.data
+    if not data then
+        return false, "No data found in backup"
+    end
+
+    -- Restore each data section
+    if data.settings then
+        self:saveUserSettings(data.settings)
+    end
+
+    if data.persistent_notes then
+        self:savePersistentNotes(data.persistent_notes)
+    end
+
+    if data.quests then
+        self:saveAllQuests(data.quests)
+    end
+
+    if data.logs then
+        self:saveDailyLogs(data.logs)
+    end
+
+    if data.reminders then
+        self:saveReminders(data.reminders)
+    end
+
+    -- Clear caches to force reload
+    settings_cache = nil
+    quests_cache = nil
+    logs_cache = nil
+    reminders_cache = nil
+
+    return true, "Data restored successfully"
+end
+
+--[[--
+Export backup to a JSON file.
+@param filename string Optional filename (without path), defaults to timestamped name
+@return boolean, string Success status and filepath or error message
+--]]
+function Data:exportBackupToFile(filename)
+    local rapidjson = require("rapidjson")
+
+    self:ensureBackupDir()
+
+    -- Generate filename if not provided
+    if not filename or filename == "" then
+        filename = "lifetracker_backup_" .. os.date("%Y%m%d_%H%M%S") .. ".json"
+    end
+
+    local filepath = self:getBackupDir() .. "/" .. filename
+    local backup = self:createBackup()
+
+    -- Use rapidjson.dump for pretty-printed output
+    local ok, err = rapidjson.dump(backup, filepath, { pretty = true, sort_keys = true })
+
+    if ok then
+        return true, filepath
+    else
+        return false, err or "Failed to write backup file"
+    end
+end
+
+--[[--
+Import backup from a JSON file.
+@param filepath string Full path to the backup file
+@return boolean, string Success status and message
+--]]
+function Data:importBackupFromFile(filepath)
+    local rapidjson = require("rapidjson")
+
+    -- Check if file exists
+    local lfs = require("libs/libkoreader-lfs")
+    if lfs.attributes(filepath, "mode") ~= "file" then
+        return false, "Backup file not found"
+    end
+
+    -- Load and parse the backup file
+    local backup, err = rapidjson.load(filepath)
+
+    if not backup then
+        return false, err or "Failed to parse backup file"
+    end
+
+    return self:restoreFromBackup(backup)
+end
+
+--[[--
+List available backup files.
+@return table Array of {filename, filepath, created_at, size} entries
+--]]
+function Data:listBackups()
+    local lfs = require("libs/libkoreader-lfs")
+    local rapidjson = require("rapidjson")
+
+    self:ensureBackupDir()
+    local backup_dir = self:getBackupDir()
+    local backups = {}
+
+    for filename in lfs.dir(backup_dir) do
+        if filename:match("%.json$") then
+            local filepath = backup_dir .. "/" .. filename
+            local attr = lfs.attributes(filepath)
+
+            -- Try to read backup metadata
+            local created_at = nil
+            local backup_data = rapidjson.load(filepath)
+            if backup_data and backup_data.created_at then
+                created_at = backup_data.created_at
+            end
+
+            table.insert(backups, {
+                filename = filename,
+                filepath = filepath,
+                created_at = created_at or os.date("%Y-%m-%d %H:%M:%S", attr.modification),
+                size = attr.size,
+            })
+        end
+    end
+
+    -- Sort by modification time (newest first)
+    table.sort(backups, function(a, b)
+        return a.created_at > b.created_at
+    end)
+
+    return backups
+end
+
+--[[--
+Delete a backup file.
+@param filepath string Full path to the backup file
+@return boolean Success status
+--]]
+function Data:deleteBackup(filepath)
+    local ok, err = os.remove(filepath)
+    return ok ~= nil, err
+end
+
+--[[--
+Perform auto-backup if one hasn't been created today.
+Creates daily auto-backups with a rolling retention policy.
+@param max_auto_backups number Maximum auto-backups to keep (default: 7)
+@return boolean, string Whether backup was created and message
+--]]
+function Data:autoBackup(max_auto_backups)
+    max_auto_backups = max_auto_backups or 7
+    local today = os.date("%Y%m%d")
+    local auto_filename = "lifetracker_auto_" .. today .. ".json"
+    local auto_filepath = self:getBackupDir() .. "/" .. auto_filename
+
+    -- Check if today's auto-backup already exists
+    local lfs = require("libs/libkoreader-lfs")
+    self:ensureBackupDir()
+
+    if lfs.attributes(auto_filepath, "mode") == "file" then
+        return false, "Auto-backup already exists for today"
+    end
+
+    -- Create today's auto-backup
+    local ok, result = self:exportBackupToFile(auto_filename)
+
+    if ok then
+        -- Clean up old auto-backups beyond retention limit
+        self:cleanupAutoBackups(max_auto_backups)
+        return true, "Auto-backup created: " .. auto_filename
+    else
+        return false, result
+    end
+end
+
+--[[--
+Remove old auto-backups beyond the retention limit.
+@param max_keep number Maximum number of auto-backups to keep
+--]]
+function Data:cleanupAutoBackups(max_keep)
+    local lfs = require("libs/libkoreader-lfs")
+    local backup_dir = self:getBackupDir()
+    local auto_backups = {}
+
+    -- Find all auto-backups
+    for filename in lfs.dir(backup_dir) do
+        if filename:match("^lifetracker_auto_%d+%.json$") then
+            local filepath = backup_dir .. "/" .. filename
+            local attr = lfs.attributes(filepath)
+            table.insert(auto_backups, {
+                filename = filename,
+                filepath = filepath,
+                mtime = attr.modification,
+            })
+        end
+    end
+
+    -- Sort by modification time (oldest first)
+    table.sort(auto_backups, function(a, b)
+        return a.mtime < b.mtime
+    end)
+
+    -- Remove oldest backups beyond limit
+    while #auto_backups > max_keep do
+        local oldest = table.remove(auto_backups, 1)
+        os.remove(oldest.filepath)
+    end
 end
 
 return Data

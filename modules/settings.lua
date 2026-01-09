@@ -67,6 +67,22 @@ function Settings:show(ui)
                 help_text = _("Show dashboard when device wakes from sleep"),
             },
             {
+                text = _("Backup Data"),
+                callback = function()
+                    UIManager:close(menu)
+                    self:createBackup(ui)
+                end,
+                help_text = _("Export all data to a backup file"),
+            },
+            {
+                text = _("Restore Data"),
+                callback = function()
+                    UIManager:close(menu)
+                    self:showRestoreMenu(ui)
+                end,
+                help_text = _("Restore data from a backup file"),
+            },
+            {
                 text = _("Reset All Data"),
                 callback = function()
                     UIManager:close(menu)
@@ -396,6 +412,187 @@ function Settings:addTimeSlot(ui, user_settings)
     }
     UIManager:show(dialog)
     dialog:onShowKeyboard()
+end
+
+-- ============================================
+-- Backup & Restore Functions
+-- ============================================
+
+--[[--
+Create a backup of all plugin data.
+--]]
+function Settings:createBackup(ui)
+    local ok, result = Data:exportBackupToFile()
+
+    if ok then
+        -- Extract just the filename for display
+        local filename = result:match("([^/]+)$")
+        UIManager:show(InfoMessage:new{
+            text = _("Backup created successfully!\n\nFile: ") .. filename,
+            timeout = 5,
+        })
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Backup failed: ") .. (result or "Unknown error"),
+            timeout = 5,
+        })
+    end
+    self:show(ui)
+end
+
+--[[--
+Show menu to restore from available backups.
+--]]
+function Settings:showRestoreMenu(ui)
+    local backups = Data:listBackups()
+
+    if #backups == 0 then
+        UIManager:show(InfoMessage:new{
+            text = _("No backups found.\n\nCreate a backup first using 'Backup Data'."),
+            timeout = 4,
+        })
+        self:show(ui)
+        return
+    end
+
+    local items = {}
+
+    for _, backup in ipairs(backups) do
+        -- Format size in KB
+        local size_kb = string.format("%.1f KB", (backup.size or 0) / 1024)
+        table.insert(items, {
+            text = backup.created_at .. " (" .. size_kb .. ")",
+            callback = function()
+                self:confirmRestore(ui, backup)
+            end,
+            hold_callback = function()
+                self:showBackupOptions(ui, backup)
+            end,
+        })
+    end
+
+    local menu
+    menu = Menu:new{
+        title = _("Select Backup to Restore"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+            self:show(ui)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+--[[--
+Show options for a backup (restore or delete).
+--]]
+function Settings:showBackupOptions(ui, backup)
+    local dialog
+    dialog = ButtonDialog:new{
+        title = backup.created_at,
+        buttons = {
+            {{
+                text = _("Restore"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:confirmRestore(ui, backup)
+                end,
+            }},
+            {{
+                text = _("Delete"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:confirmDeleteBackup(ui, backup)
+                end,
+            }},
+            {{
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showRestoreMenu(ui)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
+Confirm restoration from a backup.
+--]]
+function Settings:confirmRestore(ui, backup)
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("Restore from backup?\n\nThis will replace all current data with:\n") .. backup.created_at,
+        buttons = {
+            {{
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showRestoreMenu(ui)
+                end,
+            }},
+            {{
+                text = _("Restore"),
+                callback = function()
+                    UIManager:close(dialog)
+                    local ok, result = Data:importBackupFromFile(backup.filepath)
+                    if ok then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Data restored successfully!"),
+                            timeout = 3,
+                        })
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Restore failed: ") .. (result or "Unknown error"),
+                            timeout = 5,
+                        })
+                    end
+                    self:show(ui)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
+Confirm deletion of a backup file.
+--]]
+function Settings:confirmDeleteBackup(ui, backup)
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("Delete backup?"),
+        buttons = {
+            {{
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showRestoreMenu(ui)
+                end,
+            }},
+            {{
+                text = _("Delete"),
+                callback = function()
+                    UIManager:close(dialog)
+                    local ok = Data:deleteBackup(backup.filepath)
+                    if ok then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Backup deleted"),
+                            timeout = 2,
+                        })
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Failed to delete backup"),
+                            timeout = 3,
+                        })
+                    end
+                    self:showRestoreMenu(ui)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
 end
 
 --[[--
