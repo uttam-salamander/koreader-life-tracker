@@ -371,24 +371,29 @@ function Dashboard:showDashboardView()
     end
 
     -- ===== Wrap content in scrollable container =====
-    -- Calculate visible scroll area (inside padding)
-    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
-    local scroll_height = screen_height - Size.padding.large * 2
+    -- Calculate visible scroll area (account for scrollbar)
+    local scrollbar_width = ScrollableContainer:getScrollbarWidth()
+    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_height = screen_height
 
-    local scrollable_content = ScrollableContainer:new{
-        dimen = Geom:new{ w = scroll_width, h = scroll_height },
-        show_parent = self,
-        content,
-    }
-
-    local padded_content = FrameContainer:new{
-        width = screen_width - Navigation.TAB_WIDTH,
-        height = screen_height,
+    -- Wrap content in a frame with padding and minimum height to fill viewport
+    -- Inner frame is narrower to leave room for scrollbar
+    local inner_frame = FrameContainer:new{
+        width = scroll_width - scrollbar_width,
+        height = math.max(scroll_height, content:getSize().h + Size.padding.large * 2),
         padding = Size.padding.large,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        scrollable_content,
+        content,
     }
+
+    -- Scrollable container as the outer wrapper
+    local padded_content = ScrollableContainer:new{
+        dimen = Geom:new{ w = scroll_width, h = scroll_height },
+        inner_frame,
+    }
+    -- Store reference to set show_parent after widget creation
+    self.scrollable_container = padded_content
 
     -- ===== Create main container with gestures =====
     local ui = self.ui
@@ -425,6 +430,9 @@ function Dashboard:showDashboardView()
         ges_events = {},
         main_layout,
     }
+
+    -- Set show_parent for ScrollableContainer refresh
+    self.scrollable_container.show_parent = self.dashboard_widget
 
     -- Store top_safe_zone for gesture handlers
     self.top_safe_zone = top_safe_zone
