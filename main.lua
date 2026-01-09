@@ -304,10 +304,15 @@ end
 
 --[[--
 Called when plugin is disabled or KOReader exits.
-Clean up timer to prevent memory leak.
+Clean up timer and database connections to prevent memory/resource leaks.
 --]]
 function LifeTracker:onCloseWidget()
     self:stopReminderCheck()
+
+    -- Close reading stats database connection
+    if ReadingStats then
+        ReadingStats:close()
+    end
 end
 
 return LifeTracker

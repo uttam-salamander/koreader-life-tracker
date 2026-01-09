@@ -11,6 +11,27 @@ local ReadingStats = {}
 -- Cache for database connection
 local stats_db = nil
 
+-- Maximum allowed values for SQL query parameters (prevent abuse)
+local MAX_LIMIT = 1000
+local MAX_TIMESTAMP = 4102444800  -- Year 2100
+
+--[[--
+Validate and sanitize a numeric parameter for SQL queries.
+@param value any Value to validate
+@param default number Default value if invalid
+@param max_val number Maximum allowed value
+@return number Sanitized integer
+--]]
+local function sanitizeSqlInt(value, default, max_val)
+    local num = tonumber(value)
+    if not num then return default end
+    -- Ensure integer, positive, within bounds
+    num = math.floor(num)
+    if num < 0 then return default end
+    if max_val and num > max_val then return max_val end
+    return num
+end
+
 --[[--
 Get the statistics database connection.
 @return SQ3 database connection or nil
@@ -34,7 +55,12 @@ function ReadingStats:getStatsDB()
     local db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
 
     local open_ok, db = pcall(function()
-        return SQ3.open(db_path)
+        local conn = SQ3.open(db_path)
+        -- Set busy timeout to prevent blocking on locked database
+        if conn and conn.exec then
+            pcall(function() conn:exec("PRAGMA busy_timeout = 5000") end)
+        end
+        return conn
     end)
 
     if open_ok and db then
@@ -43,6 +69,21 @@ function ReadingStats:getStatsDB()
     end
 
     return nil
+end
+
+--[[--
+Close the statistics database connection.
+Call this when the plugin is disabled or KOReader exits.
+--]]
+function ReadingStats:close()
+    if stats_db then
+        pcall(function()
+            if stats_db.close then
+                stats_db:close()
+            end
+        end)
+        stats_db = nil
+    end
 end
 
 --[[--
@@ -89,7 +130,8 @@ Get recently read books from KOReader's statistics database.
 @return table Array of book info
 --]]
 function ReadingStats:getRecentBooksFromDB(limit)
-    limit = limit or 12
+    -- Sanitize limit parameter to prevent SQL injection
+    limit = sanitizeSqlInt(limit, 12, MAX_LIMIT)
     local books = {}
 
     local db = self:getStatsDB()
@@ -98,6 +140,7 @@ function ReadingStats:getRecentBooksFromDB(limit)
     end
 
     local ok, result = pcall(function()
+        -- Using sanitized integer is safe for string.format with %d
         local sql = string.format([[
             SELECT
                 id,
@@ -163,12 +206,10 @@ function ReadingStats:getTodayStatsFromDB()
         return stats
     end
 
-    -- Get start of today (midnight)
-    local today = os.date("*t")
-    today.hour = 0
-    today.min = 0
-    today.sec = 0
-    local today_start = os.time(today)
+    -- Get start of today using DST-safe method
+    local today_start = Data:getTodayStartTime()
+    -- Sanitize timestamp
+    today_start = sanitizeSqlInt(today_start, 0, MAX_TIMESTAMP)
 
     local ok, result = pcall(function()
         local sql = string.format([[
@@ -205,8 +246,10 @@ function ReadingStats:getWeekStatsFromDB()
         return stats
     end
 
-    -- Get start of 7 days ago
-    local week_ago = os.time() - (7 * 24 * 60 * 60)
+    -- Get start of 7 days ago using DST-safe method
+    local week_start = Data:getDaysAgoStartTime(7)
+    -- Sanitize timestamp
+    week_start = sanitizeSqlInt(week_start, 0, MAX_TIMESTAMP)
 
     local ok, result = pcall(function()
         local sql = string.format([[
@@ -215,7 +258,7 @@ function ReadingStats:getWeekStatsFromDB()
                 COALESCE(SUM(duration), 0) as time
             FROM page_stat_data
             WHERE start_time >= %d
-        ]], week_ago)
+        ]], week_start)
         return db:exec(sql)
     end)
 

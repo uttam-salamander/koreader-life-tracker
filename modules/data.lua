@@ -11,6 +11,102 @@ local LuaSettings = require("luasettings")
 
 local Data = {}
 
+-- ============================================
+-- Helper Functions (DST-safe, validation, etc)
+-- ============================================
+
+--[[--
+Get yesterday's date string in a DST-safe way.
+Uses calendar arithmetic instead of subtracting seconds.
+@return string Date in YYYY-MM-DD format
+--]]
+function Data:getYesterdayDate()
+    local t = os.date("*t")
+    t.day = t.day - 1
+    return os.date("%Y-%m-%d", os.time(t))
+end
+
+--[[--
+Get a date N days ago in a DST-safe way.
+@param days_ago number Number of days to go back
+@return string Date in YYYY-MM-DD format
+--]]
+function Data:getDateDaysAgo(days_ago)
+    local t = os.date("*t")
+    t.day = t.day - days_ago
+    return os.date("%Y-%m-%d", os.time(t))
+end
+
+--[[--
+Get start of today as Unix timestamp in a DST-safe way.
+@return number Unix timestamp for start of today (midnight)
+--]]
+function Data:getTodayStartTime()
+    local t = os.date("*t")
+    t.hour = 0
+    t.min = 0
+    t.sec = 0
+    return os.time(t)
+end
+
+--[[--
+Get start of N days ago as Unix timestamp.
+@param days_ago number Number of days to go back
+@return number Unix timestamp for start of that day
+--]]
+function Data:getDaysAgoStartTime(days_ago)
+    local t = os.date("*t")
+    t.day = t.day - days_ago
+    t.hour = 0
+    t.min = 0
+    t.sec = 0
+    return os.time(t)
+end
+
+--[[--
+Sanitize user text input.
+Removes null bytes, control characters, and trims whitespace.
+@param text string Input text
+@param max_length number Maximum allowed length (default 1000)
+@return string Sanitized text
+--]]
+function Data:sanitizeTextInput(text, max_length)
+    if not text then return "" end
+    max_length = max_length or 1000
+
+    -- Remove null bytes (could truncate C strings)
+    text = text:gsub("%z", "")
+    -- Remove control characters except newlines and tabs
+    text = text:gsub("[\1-\8\11\12\14-\31]", "")
+    -- Trim leading/trailing whitespace
+    text = text:match("^%s*(.-)%s*$") or ""
+    -- Enforce max length
+    if #text > max_length then
+        text = text:sub(1, max_length)
+    end
+
+    return text
+end
+
+--[[--
+Validate numeric input.
+@param value any Value to validate
+@param min_val number Minimum allowed value
+@param max_val number Maximum allowed value
+@return number|nil Validated number or nil if invalid
+--]]
+function Data:validateNumericInput(value, min_val, max_val)
+    local num = tonumber(value)
+    if not num then return nil end
+    -- Check for NaN and infinity
+    if num ~= num then return nil end  -- NaN check
+    if num == math.huge or num == -math.huge then return nil end
+    -- Bounds check
+    if min_val and num < min_val then return nil end
+    if max_val and num > max_val then return nil end
+    return num
+end
+
 -- File paths
 local DATA_DIR = DataStorage:getSettingsDir()
 local SETTINGS_FILE = DATA_DIR .. "/lifetracker_settings.lua"
@@ -72,21 +168,65 @@ end
 -- Settings Operations
 -- ============================================
 
+--[[--
+Default settings for fallback on corruption.
+--]]
+local DEFAULT_SETTINGS = {
+    energy_categories = {"Energetic", "Average", "Down"},
+    time_slots = {"Morning", "Afternoon", "Evening", "Night"},
+    quest_categories = {"Health", "Work", "Personal", "Learning"},
+    streak_data = {
+        current = 0,
+        longest = 0,
+        last_completed_date = nil,
+    },
+    today_energy = nil,
+    today_date = nil,
+    lock_screen_dashboard = false,
+}
+
 function Data:loadUserSettings()
-    local s = self:getSettings()
-    return {
-        energy_categories = s:readSetting("energy_categories") or {"Energetic", "Average", "Down"},
-        time_slots = s:readSetting("time_slots") or {"Morning", "Afternoon", "Evening", "Night"},
-        quest_categories = s:readSetting("quest_categories") or {"Health", "Work", "Personal", "Learning"},
-        streak_data = s:readSetting("streak_data") or {
-            current = 0,
-            longest = 0,
-            last_completed_date = nil,
-        },
-        today_energy = s:readSetting("today_energy") or nil,
-        today_date = s:readSetting("today_date") or nil,
-        lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
-    }
+    -- Wrap in pcall to handle corrupted settings files
+    local ok, result = pcall(function()
+        local s = self:getSettings()
+
+        -- Load each setting with validation
+        local energy = s:readSetting("energy_categories")
+        if type(energy) ~= "table" or #energy == 0 then
+            energy = DEFAULT_SETTINGS.energy_categories
+        end
+
+        local slots = s:readSetting("time_slots")
+        if type(slots) ~= "table" or #slots == 0 then
+            slots = DEFAULT_SETTINGS.time_slots
+        end
+
+        local categories = s:readSetting("quest_categories")
+        if type(categories) ~= "table" or #categories == 0 then
+            categories = DEFAULT_SETTINGS.quest_categories
+        end
+
+        local streak = s:readSetting("streak_data")
+        if type(streak) ~= "table" then
+            streak = DEFAULT_SETTINGS.streak_data
+        end
+
+        return {
+            energy_categories = energy,
+            time_slots = slots,
+            quest_categories = categories,
+            streak_data = streak,
+            today_energy = s:readSetting("today_energy"),
+            today_date = s:readSetting("today_date"),
+            lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
+        }
+    end)
+
+    if not ok then
+        -- Return defaults on corruption
+        return DEFAULT_SETTINGS
+    end
+    return result
 end
 
 function Data:saveUserSettings(user_settings)
@@ -146,17 +286,23 @@ function Data:saveAllQuests(quests)
 end
 
 --[[--
-Generate a unique sequential ID.
-Uses persistent counter to prevent collisions.
-@return number Unique ID
+Generate a unique ID using timestamp + random component.
+More robust than pure sequential - survives crashes and has no precision issues.
+@return string Unique ID string (timestamp_random format)
 --]]
 function Data:generateUniqueId()
     local s = self:getSettings()
-    local last_id = s:readSetting("last_generated_id") or (os.time() * 1000)
-    last_id = last_id + 1
-    s:saveSetting("last_generated_id", last_id)
+    local counter = s:readSetting("id_counter") or 0
+    counter = counter + 1
+    s:saveSetting("id_counter", counter)
     s:flush()
-    return last_id
+
+    -- Combine timestamp, counter, and random for uniqueness
+    -- This survives crashes (counter persisted), same-second creates (counter differs),
+    -- and multi-device scenarios (random component)
+    local timestamp = os.time()
+    local random_part = math.random(1000, 9999)
+    return string.format("%d_%d_%d", timestamp, counter, random_part)
 end
 
 function Data:addQuest(quest_type, quest)
@@ -345,8 +491,16 @@ Map an hour of day to a time slot name.
 @return string Time slot name
 --]]
 function Data:hourToTimeSlot(hour, time_slots)
-    time_slots = time_slots or {"Morning", "Afternoon", "Evening", "Night"}
+    -- Ensure time_slots is valid
+    if type(time_slots) ~= "table" or #time_slots == 0 then
+        time_slots = {"Morning", "Afternoon", "Evening", "Night"}
+    end
     local num_slots = #time_slots
+
+    -- Validate hour
+    hour = tonumber(hour) or 12
+    if hour < 0 then hour = 0 end
+    if hour > 23 then hour = 23 end
 
     if num_slots == 4 then
         -- Standard 4-slot breakdown
@@ -399,7 +553,7 @@ end
 
 function Data:getDayLog(date)
     local logs = self:loadDailyLogs()
-    return logs[date]
+    return logs[date] or {}  -- Return empty table to prevent nil access crashes
 end
 
 function Data:getLogsForRange(start_date, end_date)
@@ -560,9 +714,18 @@ function Data:ensureBackupDir()
     return true
 end
 
+-- Windows reserved filenames (case-insensitive)
+local WINDOWS_RESERVED = {
+    CON = true, PRN = true, AUX = true, NUL = true,
+    COM1 = true, COM2 = true, COM3 = true, COM4 = true,
+    COM5 = true, COM6 = true, COM7 = true, COM8 = true, COM9 = true,
+    LPT1 = true, LPT2 = true, LPT3 = true, LPT4 = true,
+    LPT5 = true, LPT6 = true, LPT7 = true, LPT8 = true, LPT9 = true,
+}
+
 --[[--
 Sanitize a filename to prevent path traversal attacks.
-Removes directory separators, null bytes, and dangerous characters.
+Removes directory separators, null bytes, dangerous characters, and Windows reserved names.
 @param filename string The filename to sanitize
 @return string|nil Sanitized filename or nil if invalid
 --]]
@@ -595,6 +758,12 @@ function Data:sanitizeFilename(filename)
 
     -- Ensure filename is not empty after sanitization
     if sanitized == ".json" or sanitized == "" then
+        return nil
+    end
+
+    -- Check for Windows reserved filenames (without extension)
+    local base_name = sanitized:match("^(.+)%.json$")
+    if base_name and WINDOWS_RESERVED[base_name:upper()] then
         return nil
     end
 
@@ -681,27 +850,59 @@ function Data:validateBackupStructure(backup)
         return false, "No data found in backup"
     end
 
-    -- Validate settings structure
+    -- Validate settings structure with deep type checking
     if data.settings then
         if type(data.settings) ~= "table" then
             return false, "Invalid settings format"
         end
-        if data.settings.energy_categories and type(data.settings.energy_categories) ~= "table" then
-            return false, "Invalid energy_categories format"
+        -- Validate energy_categories array contains strings
+        if data.settings.energy_categories then
+            if type(data.settings.energy_categories) ~= "table" then
+                return false, "Invalid energy_categories format"
+            end
+            for _, cat in ipairs(data.settings.energy_categories) do
+                if type(cat) ~= "string" then
+                    return false, "Invalid energy category value"
+                end
+            end
         end
-        if data.settings.time_slots and type(data.settings.time_slots) ~= "table" then
-            return false, "Invalid time_slots format"
+        -- Validate time_slots array contains strings
+        if data.settings.time_slots then
+            if type(data.settings.time_slots) ~= "table" then
+                return false, "Invalid time_slots format"
+            end
+            for _, slot in ipairs(data.settings.time_slots) do
+                if type(slot) ~= "string" then
+                    return false, "Invalid time slot value"
+                end
+            end
         end
     end
 
-    -- Validate quests structure
+    -- Validate quests structure with element validation
     if data.quests then
         if type(data.quests) ~= "table" then
             return false, "Invalid quests format"
         end
-        for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-            if data.quests[quest_type] and type(data.quests[quest_type]) ~= "table" then
-                return false, "Invalid " .. quest_type .. " quests format"
+        for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+            local quests = data.quests[quest_type]
+            if quests then
+                if type(quests) ~= "table" then
+                    return false, "Invalid " .. quest_type .. " quests format"
+                end
+                -- Validate each quest has required fields
+                for _, quest in ipairs(quests) do
+                    if type(quest) ~= "table" then
+                        return false, "Invalid quest entry in " .. quest_type
+                    end
+                    -- Quest must have an id and title
+                    if quest.id == nil then
+                        return false, "Quest missing id in " .. quest_type
+                    end
+                    if type(quest.title) ~= "string" and quest.title ~= nil then
+                        return false, "Invalid quest title in " .. quest_type
+                    end
+                end
             end
         end
     end
@@ -805,13 +1006,16 @@ function Data:exportBackupToFile(filename)
     end
 
     -- Write to temp file first (atomic write pattern)
+    -- Use pcall to ensure file handle is always closed even on exceptions
     local file, err = io.open(temp_filepath, "w")
     if not file then
         return false, "Failed to create backup file: " .. tostring(err)
     end
 
-    local write_ok, write_err = file:write(json_str)
-    file:close()
+    local write_ok, write_err = pcall(function()
+        file:write(json_str)
+    end)
+    file:close()  -- Always close, even if write threw exception
 
     if not write_ok then
         pcall(os.remove, temp_filepath)
@@ -837,8 +1041,8 @@ function Data:exportBackupToFile(filename)
     return true, filepath
 end
 
--- Maximum backup file size (10MB)
-local MAX_BACKUP_SIZE = 10 * 1024 * 1024
+-- Maximum backup file size (50MB to support long-term users)
+local MAX_BACKUP_SIZE = 50 * 1024 * 1024
 
 --[[--
 Import backup from a JSON file.

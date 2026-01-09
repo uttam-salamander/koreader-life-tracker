@@ -967,14 +967,16 @@ function Dashboard:buildQuestRow(quest, quest_type)
 end
 
 --[[--
-Filter quests by energy level.
+Filter quests by energy level and skip status.
 Shows quests that require your current energy level OR LESS.
 High energy days show all quests.
+Filters out quests that were skipped TODAY (they reappear tomorrow).
 --]]
 function Dashboard:filterQuestsByEnergy(quests, energy_level)
     local filtered = {}
     local user_settings = self.user_settings
     local categories = user_settings.energy_categories or {"Energetic", "Average", "Down"}
+    local today = Data:getCurrentDate()
 
     -- Build energy level index (lower index = higher energy)
     local energy_index = {}
@@ -985,7 +987,12 @@ function Dashboard:filterQuestsByEnergy(quests, energy_level)
     local current_level = energy_index[energy_level] or 2  -- Default to middle
     local is_high_energy = (current_level == 1)
 
-    for __, quest in ipairs(quests) do
+    for _, quest in ipairs(quests) do
+        -- Skip quests that were skipped TODAY (they reappear tomorrow)
+        if quest.skipped_date == today then
+            goto continue
+        end
+
         local required_level = energy_index[quest.energy_required] or 0  -- 0 for "Any"
 
         -- Show if:
@@ -998,6 +1005,8 @@ function Dashboard:filterQuestsByEnergy(quests, energy_level)
            required_level >= current_level then
             table.insert(filtered, quest)
         end
+
+        ::continue::
     end
 
     return filtered
@@ -1401,8 +1410,12 @@ function Dashboard:buildDynamicHeatmap(content_width)
     end
 
     -- Set dynamic thresholds (4 levels)
+    -- Handle max_completions == 0 explicitly to avoid division issues
     local t1, t2, t3
-    if max_completions <= 4 then
+    if max_completions == 0 then
+        -- No data yet - all cells will show as empty
+        t1, t2, t3 = 1, 1, 1
+    elseif max_completions <= 4 then
         t1, t2, t3 = 1, 2, 3
     else
         t1 = math.ceil(max_completions / 4)

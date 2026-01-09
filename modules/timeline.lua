@@ -538,9 +538,9 @@ function Timeline:showTimelineView()
     UIManager:show(self.timeline_widget)
 end
 
--- UI Constants for progressive quests
+-- UI Constants for progressive quests (must match dashboard.lua)
 local SMALL_BUTTON_WIDTH = 35
-local PROGRESS_WIDTH = 60
+local PROGRESS_WIDTH = 70  -- Matches dashboard for consistent tap zones
 
 --[[--
 Build a single quest row with OK/Skip buttons (binary) or +/-/Skip buttons (progressive).
