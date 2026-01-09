@@ -347,76 +347,188 @@ end
 
 --[[--
 Build a single quest row with inline buttons.
+Supports both binary (OK/Skip) and progressive (+/-) quests.
 --]]
 function Quests:buildQuestRow(quest, content_width)
+    local today = os.date("%Y-%m-%d")
     local status_bg = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE
     local text_color = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
 
-    -- Title area (tappable for details/edit)
-    local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
-
-    local title_text = quest.title
-    if quest.time_slot then
-        title_text = string.format("[%s] %s", quest.time_slot:sub(1,1), quest.title)
+    -- Check if progressive quest needs daily reset
+    if quest.is_progressive and quest.progress_last_date ~= today then
+        quest.progress_current = 0
     end
 
-    local title_widget = TextWidget:new{
-        text = title_text,
-        face = Font:getFace("cfont", 14),
-        fgcolor = text_color,
-        max_width = title_width - Size.padding.small * 2,
-    }
+    local row
 
-    -- Complete button (checkmark)
-    local complete_text = quest.completed and "X" or "OK"
-    local complete_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = QUEST_ROW_HEIGHT - 4,
-        padding = 2,
-        bordersize = 1,
-        background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
-            TextWidget:new{
-                text = complete_text,
-                face = Font:getFace("cfont", 12),
-                bold = true,
+    if quest.is_progressive then
+        -- Progressive quest layout: [−] [3/10 pages] [+] [Title]
+        local SMALL_BUTTON_WIDTH = 35
+        local PROGRESS_WIDTH = 80
+        -- Total buttons/spans: 35 + 2 + 80 + 2 + 35 + padding.small = 154 + padding.small
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
+
+        -- Build title with category prefix
+        local title_text = quest.title
+        if quest.category then
+            title_text = string.format("[%s] %s", quest.category:sub(1,1), quest.title)
+        elseif quest.time_slot then
+            title_text = string.format("[%s] %s", quest.time_slot:sub(1,1), quest.title)
+        end
+
+        local title_widget = TextWidget:new{
+            text = title_text,
+            face = Font:getFace("cfont", 13),
+            fgcolor = text_color,
+            max_width = title_width - Size.padding.small * 2,
+        }
+
+        -- Minus button
+        local minus_button = FrameContainer:new{
+            width = SMALL_BUTTON_WIDTH,
+            height = QUEST_ROW_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                TextWidget:new{
+                    text = "−",
+                    face = Font:getFace("cfont", 16),
+                    bold = true,
+                },
             },
-        },
-    }
+        }
 
-    -- Skip button
-    local skip_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = QUEST_ROW_HEIGHT - 4,
-        padding = 2,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
-            TextWidget:new{
-                text = "Skip",
-                face = Font:getFace("cfont", 10),
+        -- Progress display with fill indicator
+        local current = quest.progress_current or 0
+        local target = quest.progress_target or 1
+        local pct = math.min(1, current / target)
+        local progress_bg = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
+        local progress_text = string.format("%d/%d", current, target)
+        if quest.progress_unit then
+            progress_text = progress_text .. " " .. quest.progress_unit:sub(1, 4)
+        end
+
+        local progress_display = FrameContainer:new{
+            width = PROGRESS_WIDTH,
+            height = QUEST_ROW_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = progress_bg,
+            CenterContainer:new{
+                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                TextWidget:new{
+                    text = progress_text,
+                    face = Font:getFace("cfont", 11),
+                    bold = quest.completed,
+                },
             },
-        },
-    }
+        }
 
-    -- Put buttons on LEFT for easier tapping, then title
-    local row = HorizontalGroup:new{
-        align = "center",
-        complete_button,
-        HorizontalSpan:new{ width = 2 },
-        skip_button,
-        HorizontalSpan:new{ width = Size.padding.small },
-        FrameContainer:new{
-            width = title_width,
-            height = QUEST_ROW_HEIGHT,
-            padding = Size.padding.small,
-            bordersize = 0,
-            background = status_bg,
-            title_widget,
-        },
-    }
+        -- Plus button
+        local plus_button = FrameContainer:new{
+            width = SMALL_BUTTON_WIDTH,
+            height = QUEST_ROW_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                TextWidget:new{
+                    text = "+",
+                    face = Font:getFace("cfont", 16),
+                    bold = true,
+                },
+            },
+        }
+
+        row = HorizontalGroup:new{
+            align = "center",
+            minus_button,
+            HorizontalSpan:new{ width = 2 },
+            progress_display,
+            HorizontalSpan:new{ width = 2 },
+            plus_button,
+            HorizontalSpan:new{ width = Size.padding.small },
+            FrameContainer:new{
+                width = title_width,
+                height = QUEST_ROW_HEIGHT,
+                padding = Size.padding.small,
+                bordersize = 0,
+                background = status_bg,
+                title_widget,
+            },
+        }
+    else
+        -- Binary quest layout: [OK] [Skip] [Title]
+        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
+
+        -- Build title with category or time slot prefix
+        local title_text = quest.title
+        if quest.category then
+            title_text = string.format("[%s] %s", quest.category:sub(1,1), quest.title)
+        elseif quest.time_slot then
+            title_text = string.format("[%s] %s", quest.time_slot:sub(1,1), quest.title)
+        end
+
+        local title_widget = TextWidget:new{
+            text = title_text,
+            face = Font:getFace("cfont", 14),
+            fgcolor = text_color,
+            max_width = title_width - Size.padding.small * 2,
+        }
+
+        -- Complete button (checkmark)
+        local complete_text = quest.completed and "X" or "OK"
+        local complete_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = QUEST_ROW_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                TextWidget:new{
+                    text = complete_text,
+                    face = Font:getFace("cfont", 12),
+                    bold = true,
+                },
+            },
+        }
+
+        -- Skip button
+        local skip_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = QUEST_ROW_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                TextWidget:new{
+                    text = "Skip",
+                    face = Font:getFace("cfont", 10),
+                },
+            },
+        }
+
+        row = HorizontalGroup:new{
+            align = "center",
+            complete_button,
+            HorizontalSpan:new{ width = 2 },
+            skip_button,
+            HorizontalSpan:new{ width = Size.padding.small },
+            FrameContainer:new{
+                width = title_width,
+                height = QUEST_ROW_HEIGHT,
+                padding = Size.padding.small,
+                bordersize = 0,
+                background = status_bg,
+                title_widget,
+            },
+        }
+    end
 
     return FrameContainer:new{
         width = content_width,
@@ -463,64 +575,148 @@ function Quests:setupGestureHandlers(content_width)
     end
 
     -- Quest row taps - use tracked Y positions
-    -- Buttons are on LEFT: OK, Skip, then Title
+    -- Layout depends on quest type:
+    -- Binary: [OK] [Skip] [Title]
+    -- Progressive: [−] [progress] [+] [Title]
     for idx, row_info in ipairs(self.quest_rows) do
         local row_y = row_info.y
-        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
         local quest = row_info.quest
 
-        -- Complete (OK) button tap - leftmost position
-        local complete_gesture = "QuestComplete_" .. idx
-        self.quests_widget.ges_events[complete_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large,
-                    y = row_y,
-                    w = BUTTON_WIDTH,
-                    h = QUEST_ROW_HEIGHT,
-                },
-            },
-        }
-        self.quests_widget["on" .. complete_gesture] = function()
-            quests_module:toggleQuestComplete(quest)
-            return true
-        end
+        if quest.is_progressive then
+            -- Progressive quest layout: [−] [progress] [+] [Title]
+            -- Layout: minus(35) + span(2) + progress(80) + span(2) + plus(35) + span(padding.small) + title
+            local SMALL_BUTTON_WIDTH = 35
+            local PROGRESS_WIDTH = 80
+            local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
 
-        -- Skip button tap - after OK button
-        local skip_gesture = "QuestSkip_" .. idx
-        self.quests_widget.ges_events[skip_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large + BUTTON_WIDTH + 2,
-                    y = row_y,
-                    w = BUTTON_WIDTH,
-                    h = QUEST_ROW_HEIGHT,
+            -- Minus button tap
+            local minus_gesture = "QuestMinus_" .. idx
+            self.quests_widget.ges_events[minus_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large,
+                        y = row_y,
+                        w = SMALL_BUTTON_WIDTH,
+                        h = QUEST_ROW_HEIGHT,
+                    },
                 },
-            },
-        }
-        self.quests_widget["on" .. skip_gesture] = function()
-            quests_module:skipQuest(quest)
-            return true
-        end
+            }
+            self.quests_widget["on" .. minus_gesture] = function()
+                quests_module:decrementQuestProgress(quest)
+                return true
+            end
 
-        -- Title area tap (opens menu) - after both buttons
-        local title_gesture = "QuestTitle_" .. idx
-        self.quests_widget.ges_events[title_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large + BUTTON_WIDTH * 2 + Size.padding.small + 2,
-                    y = row_y,
-                    w = title_width,
-                    h = QUEST_ROW_HEIGHT,
+            -- Progress display tap (manual input)
+            local progress_gesture = "QuestProgress_" .. idx
+            self.quests_widget.ges_events[progress_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large + SMALL_BUTTON_WIDTH + 2,
+                        y = row_y,
+                        w = PROGRESS_WIDTH,
+                        h = QUEST_ROW_HEIGHT,
+                    },
                 },
-            },
-        }
-        self.quests_widget["on" .. title_gesture] = function()
-            quests_module:showQuestActions(quest)
-            return true
+            }
+            self.quests_widget["on" .. progress_gesture] = function()
+                quests_module:showProgressInput(quest)
+                return true
+            end
+
+            -- Plus button tap
+            local plus_gesture = "QuestPlus_" .. idx
+            self.quests_widget.ges_events[plus_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large + SMALL_BUTTON_WIDTH + 2 + PROGRESS_WIDTH + 2,
+                        y = row_y,
+                        w = SMALL_BUTTON_WIDTH,
+                        h = QUEST_ROW_HEIGHT,
+                    },
+                },
+            }
+            self.quests_widget["on" .. plus_gesture] = function()
+                quests_module:incrementQuestProgress(quest)
+                return true
+            end
+
+            -- Title area tap (opens menu)
+            local title_gesture = "QuestTitle_" .. idx
+            self.quests_widget.ges_events[title_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large + SMALL_BUTTON_WIDTH * 2 + PROGRESS_WIDTH + 4 + Size.padding.small,
+                        y = row_y,
+                        w = title_width,
+                        h = QUEST_ROW_HEIGHT,
+                    },
+                },
+            }
+            self.quests_widget["on" .. title_gesture] = function()
+                quests_module:showQuestActions(quest)
+                return true
+            end
+        else
+            -- Binary quest layout: [OK] [Skip] [Title]
+            local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
+
+            -- Complete (OK) button tap - leftmost position
+            local complete_gesture = "QuestComplete_" .. idx
+            self.quests_widget.ges_events[complete_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large,
+                        y = row_y,
+                        w = BUTTON_WIDTH,
+                        h = QUEST_ROW_HEIGHT,
+                    },
+                },
+            }
+            self.quests_widget["on" .. complete_gesture] = function()
+                quests_module:toggleQuestComplete(quest)
+                return true
+            end
+
+            -- Skip button tap - after OK button
+            local skip_gesture = "QuestSkip_" .. idx
+            self.quests_widget.ges_events[skip_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large + BUTTON_WIDTH + 2,
+                        y = row_y,
+                        w = BUTTON_WIDTH,
+                        h = QUEST_ROW_HEIGHT,
+                    },
+                },
+            }
+            self.quests_widget["on" .. skip_gesture] = function()
+                quests_module:skipQuest(quest)
+                return true
+            end
+
+            -- Title area tap (opens menu) - after both buttons
+            local title_gesture = "QuestTitle_" .. idx
+            self.quests_widget.ges_events[title_gesture] = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = Geom:new{
+                        x = Size.padding.large + BUTTON_WIDTH * 2 + Size.padding.small + 2,
+                        y = row_y,
+                        w = title_width,
+                        h = QUEST_ROW_HEIGHT,
+                    },
+                },
+            }
+            self.quests_widget["on" .. title_gesture] = function()
+                quests_module:showQuestActions(quest)
+                return true
+            end
         end
     end
 
@@ -742,6 +938,96 @@ function Quests:skipQuest(quest)
 end
 
 --[[--
+Increment progress for a progressive quest.
+--]]
+function Quests:incrementQuestProgress(quest)
+    local updated = Data:incrementQuestProgress(self.current_type, quest.id)
+    if updated then
+        if updated.completed then
+            self:updateDailyLog()
+            self:updateGlobalStreak()
+            UIManager:show(InfoMessage:new{
+                text = _("Quest completed!"),
+                timeout = 1,
+            })
+        end
+        -- Refresh
+        UIManager:close(self.quests_widget)
+        self:showQuestsView()
+        UIManager:setDirty("all", "ui")
+    end
+end
+
+--[[--
+Decrement progress for a progressive quest.
+--]]
+function Quests:decrementQuestProgress(quest)
+    local updated = Data:decrementQuestProgress(self.current_type, quest.id)
+    if updated then
+        -- Refresh
+        UIManager:close(self.quests_widget)
+        self:showQuestsView()
+        UIManager:setDirty("all", "ui")
+    end
+end
+
+--[[--
+Show input dialog for manually setting progress.
+--]]
+function Quests:showProgressInput(quest)
+    local dialog
+    dialog = InputDialog:new{
+        title = string.format(_("Set Progress for '%s'"), quest.title),
+        input = tostring(quest.progress_current or 0),
+        input_hint = string.format(_("Current: %d/%d %s"),
+            quest.progress_current or 0,
+            quest.progress_target or 1,
+            quest.progress_unit or ""),
+        input_type = "number",
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            },
+            {
+                text = _("Set"),
+                is_enter_default = true,
+                callback = function()
+                    local value = tonumber(dialog:getInputText())
+                    if value and value >= 0 then
+                        local updated = Data:setQuestProgress(self.current_type, quest.id, value)
+                        if updated then
+                            if updated.completed then
+                                self:updateDailyLog()
+                                self:updateGlobalStreak()
+                                UIManager:show(InfoMessage:new{
+                                    text = _("Quest completed!"),
+                                    timeout = 1,
+                                })
+                            end
+                        end
+                        UIManager:close(dialog)
+                        -- Refresh
+                        UIManager:close(self.quests_widget)
+                        self:showQuestsView()
+                        UIManager:setDirty("all", "ui")
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a valid number"),
+                            timeout = 2,
+                        })
+                    end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
 Update global streak data.
 --]]
 function Quests:updateGlobalStreak()
@@ -807,6 +1093,10 @@ function Quests:showAddQuestDialog()
         title = "",
         time_slot = nil,
         energy_required = {},  -- Multi-select array
+        category = nil,        -- Quest category
+        is_progressive = false, -- Progressive quest flag
+        progress_target = nil,  -- Target for progressive quests
+        progress_unit = nil,    -- Unit for progressive quests
     }
     self:showQuestTitleInput(false)
 end
@@ -824,6 +1114,10 @@ function Quests:showEditQuestDialog(quest)
         title = quest.title,
         time_slot = quest.time_slot,
         energy_required = energy or {},
+        category = quest.category,
+        is_progressive = quest.is_progressive or false,
+        progress_target = quest.progress_target,
+        progress_unit = quest.progress_unit,
     }
     self:showQuestTitleInput(true)
 end
@@ -943,7 +1237,7 @@ function Quests:showEnergySelectorWithSelection(is_edit)
     end
 
     table.insert(buttons, {{
-        text = _("Done"),
+        text = _("Next: Category"),
         callback = function()
             -- Convert to array
             local energies = {}
@@ -952,7 +1246,7 @@ function Quests:showEnergySelectorWithSelection(is_edit)
             end
             self.new_quest.energy_required = #energies > 0 and energies or "Any"
             UIManager:close(self.energy_dialog)
-            self:saveQuest(is_edit)
+            self:showCategorySelector(is_edit)
         end,
     }})
 
@@ -971,6 +1265,160 @@ function Quests:showEnergySelectorWithSelection(is_edit)
 end
 
 --[[--
+Show category selector.
+--]]
+function Quests:showCategorySelector(is_edit)
+    local user_settings = Data:loadUserSettings()
+    local buttons = {}
+
+    -- "None" option
+    local none_selected = self.new_quest.category == nil
+    table.insert(buttons, {{
+        text = (none_selected and "[X] " or "[ ] ") .. _("None (uncategorized)"),
+        callback = function()
+            self.new_quest.category = nil
+            UIManager:close(self.category_dialog)
+            self:showQuestTypeSelector(is_edit)
+        end,
+    }})
+
+    -- Category options
+    for _, cat in ipairs(user_settings.quest_categories or {}) do
+        local selected = self.new_quest.category == cat
+        table.insert(buttons, {{
+            text = (selected and "[X] " or "[ ] ") .. cat,
+            callback = function()
+                self.new_quest.category = cat
+                UIManager:close(self.category_dialog)
+                self:showQuestTypeSelector(is_edit)
+            end,
+        }})
+    end
+
+    table.insert(buttons, {{
+        text = _("Cancel"),
+        callback = function()
+            UIManager:close(self.category_dialog)
+        end,
+    }})
+
+    self.category_dialog = ButtonDialog:new{
+        title = _("What area of life is this?"),
+        buttons = buttons,
+    }
+    UIManager:show(self.category_dialog)
+end
+
+--[[--
+Show quest type selector (Binary vs Progressive).
+--]]
+function Quests:showQuestTypeSelector(is_edit)
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("How do you complete this quest?"),
+        buttons = {
+            {{
+                text = self.new_quest.is_progressive and "[ ] " .. _("One-time (OK/Skip)") or "[X] " .. _("One-time (OK/Skip)"),
+                callback = function()
+                    self.new_quest.is_progressive = false
+                    UIManager:close(dialog)
+                    self:saveQuest(is_edit)
+                end,
+            }},
+            {{
+                text = self.new_quest.is_progressive and "[X] " .. _("Progressive (+/- buttons)") or "[ ] " .. _("Progressive (+/- buttons)"),
+                callback = function()
+                    self.new_quest.is_progressive = true
+                    UIManager:close(dialog)
+                    self:showProgressTargetInput(is_edit)
+                end,
+            }},
+            {{
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
+Show progress target input for progressive quests.
+--]]
+function Quests:showProgressTargetInput(is_edit)
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Daily Target"),
+        input = self.new_quest.progress_target and tostring(self.new_quest.progress_target) or "10",
+        input_hint = _("How many per day? (e.g., 10)"),
+        input_type = "number",
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            },
+            {
+                text = _("Next: Unit"),
+                is_enter_default = true,
+                callback = function()
+                    local target = tonumber(dialog:getInputText())
+                    if not target or target < 1 then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a number greater than 0"),
+                            timeout = 2,
+                        })
+                        return
+                    end
+                    self.new_quest.progress_target = target
+                    UIManager:close(dialog)
+                    self:showProgressUnitInput(is_edit)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
+Show progress unit input for progressive quests.
+--]]
+function Quests:showProgressUnitInput(is_edit)
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Unit of Progress"),
+        input = self.new_quest.progress_unit or "pages",
+        input_hint = _("What are you counting? (e.g., pages, reps, minutes)"),
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            },
+            {
+                text = _("Save Quest"),
+                is_enter_default = true,
+                callback = function()
+                    self.new_quest.progress_unit = dialog:getInputText()
+                    if self.new_quest.progress_unit == "" then
+                        self.new_quest.progress_unit = "units"
+                    end
+                    UIManager:close(dialog)
+                    self:saveQuest(is_edit)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
 Save the quest (new or edited).
 --]]
 function Quests:saveQuest(is_edit)
@@ -979,6 +1427,10 @@ function Quests:saveQuest(is_edit)
             title = self.new_quest.title,
             time_slot = self.new_quest.time_slot,
             energy_required = self.new_quest.energy_required,
+            category = self.new_quest.category,
+            is_progressive = self.new_quest.is_progressive,
+            progress_target = self.new_quest.progress_target,
+            progress_unit = self.new_quest.progress_unit,
         })
         UIManager:show(InfoMessage:new{
             text = _("Quest updated!"),
@@ -989,6 +1441,10 @@ function Quests:saveQuest(is_edit)
             title = self.new_quest.title,
             time_slot = self.new_quest.time_slot,
             energy_required = self.new_quest.energy_required,
+            category = self.new_quest.category,
+            is_progressive = self.new_quest.is_progressive,
+            progress_target = self.new_quest.progress_target,
+            progress_unit = self.new_quest.progress_unit,
         })
         UIManager:show(InfoMessage:new{
             text = _("Quest added!"),

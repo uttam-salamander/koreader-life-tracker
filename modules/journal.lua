@@ -145,6 +145,116 @@ function Journal:showJournalView()
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
+    -- Persistent Notes Section (stays across days)
+    local persistent_notes = Data:loadPersistentNotes()
+    local Button = require("ui/widget/button")
+
+    table.insert(content, TextWidget:new{
+        text = "Notes",
+        face = Font:getFace("tfont", 16),
+        bold = true,
+    })
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = Blitbuffer.gray(0.5),
+    })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+
+    if persistent_notes and persistent_notes ~= "" then
+        table.insert(content, TextWidget:new{
+            text = persistent_notes,
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.gray(0.3),
+            max_width = content_width,
+        })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    else
+        table.insert(content, TextWidget:new{
+            text = "(No notes yet)",
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.gray(0.5),
+        })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    end
+
+    -- Edit Notes Button
+    local journal_self = self
+    local notes_button = Button:new{
+        text = persistent_notes and "Edit Notes" or "Add Notes",
+        callback = function()
+            journal_self:showEditPersistentNotes()
+        end,
+        width = 120,
+        bordersize = 1,
+        margin = 0,
+        padding = Size.padding.small,
+    }
+    table.insert(content, notes_button)
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+
+    -- Today's Reflection Section (daily)
+    local reflection = self:getTodayReflection()
+
+    table.insert(content, TextWidget:new{
+        text = "Today's Reflection",
+        face = Font:getFace("tfont", 16),
+        bold = true,
+    })
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = Blitbuffer.gray(0.5),
+    })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+
+    if reflection and reflection ~= "" then
+        table.insert(content, TextWidget:new{
+            text = reflection,
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.gray(0.3),
+            max_width = content_width,
+        })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    else
+        table.insert(content, TextWidget:new{
+            text = "(No reflection yet)",
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.gray(0.5),
+        })
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    end
+
+    -- Edit Reflection Button
+    local reflection_button = Button:new{
+        text = reflection and "Edit Reflection" or "Add Reflection",
+        callback = function()
+            journal_self:showAddReflection()
+        end,
+        width = 140,
+        bordersize = 1,
+        margin = 0,
+        padding = Size.padding.small,
+    }
+    table.insert(content, reflection_button)
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+
+    -- Category Performance Chart
+    table.insert(content, TextWidget:new{
+        text = "Category Performance",
+        face = Font:getFace("tfont", 16),
+        bold = true,
+    })
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = Blitbuffer.gray(0.5),
+    })
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+
+    local spider_widgets = self:buildCategorySpiderChart(content_width)
+    for _, widget in ipairs(spider_widgets) do
+        table.insert(content, widget)
+    end
+    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+
     -- Pattern Insight
     local insight = self:generateInsight(weekly_stats, mood_data)
     if insight then
@@ -434,15 +544,16 @@ function Journal:getWeeklyStats()
 end
 
 --[[--
-Get weekly mood data with all entries for line graph.
-Returns both daily summary and individual entries per day.
+Get weekly mood data with time slot breakdown.
+Returns mood by time slot for each day (Morning, Afternoon, Evening, Night).
 --]]
 function Journal:getWeeklyMood()
     local logs = Data:loadDailyLogs()
     local settings = Data:loadUserSettings()
     local energy_categories = settings.energy_categories or {"Energetic", "Average", "Down"}
+    local time_slots = settings.time_slots or {"Morning", "Afternoon", "Evening", "Night"}
     local today = os.time()
-    local day_abbrs = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+    local day_abbrs = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"}
 
     -- Map energy levels to scores (first = highest)
     local energy_scores = {}
@@ -460,99 +571,107 @@ function Journal:getWeeklyMood()
         local day_abbr = day_abbrs[day_info.wday == 1 and 7 or day_info.wday - 1]
 
         local day_data = logs[date_str]
-        local energy = day_data and day_data.energy_level
-        local score = energy and energy_scores[energy] or 0
 
-        -- Get all mood entries for this day
+        -- Initialize slots for this day
+        local slot_scores = {}
+        for _, slot in ipairs(time_slots) do
+            slot_scores[slot] = nil  -- No data yet
+        end
+
+        -- Get mood entries and map to time slots
         local entries = day_data and day_data.energy_entries or {}
-        local entry_scores = {}
         for _, entry in ipairs(entries) do
+            local slot = entry.time_slot or Data:hourToTimeSlot(entry.hour, time_slots)
             local entry_score = energy_scores[entry.energy] or 0
-            table.insert(entry_scores, {
-                hour = entry.hour,
-                score = entry_score,
-                energy = entry.energy,
-            })
+            -- Keep the latest entry for each slot
+            slot_scores[slot] = entry_score
+        end
+
+        -- Fallback to daily energy if no entries
+        if #entries == 0 and day_data and day_data.energy_level then
+            local score = energy_scores[day_data.energy_level] or 0
+            -- Apply to all slots as fallback
+            for _, slot in ipairs(time_slots) do
+                slot_scores[slot] = score
+            end
         end
 
         table.insert(mood_data, {
             abbr = day_abbr,
-            energy = energy,
-            score = score,
-            entries = entry_scores,  -- All entries for this day
+            date = date_str,
+            slot_scores = slot_scores,
         })
     end
 
-    return mood_data, energy_categories
+    return mood_data, energy_categories, time_slots
 end
 
 --[[--
-Render a text-based line graph for weekly mood.
+Render a text-based line graph for weekly mood with time slot breakdown.
+Each day is divided into time slots (Morning, Afternoon, Evening, Night).
 @param mood_data table Weekly mood data from getWeeklyMood
 @param energy_categories table Energy level names
-@param width number Available width in characters
+@param _max_width number Maximum width in characters (unused, we use fixed widths)
 @return table Array of TextWidgets for the graph
 --]]
-function Journal:renderMoodLineGraph(mood_data, energy_categories, width)
+function Journal:renderMoodLineGraph(mood_data, energy_categories, _max_width)
     local widgets = {}
-    -- Use fixed 6-char columns for each day, Y-axis prefix is 4 chars "X | "
-    local col_width = math.max(6, math.floor((width - 4) / 7))
+    local settings = Data:loadUserSettings()
+    local time_slots = settings.time_slots or {"Morning", "Afternoon", "Evening", "Night"}
+    local num_slots = #time_slots
+
+    -- Fixed layout: each slot gets 2 chars, prefix is 4 chars "X | "
+    local slot_width = 2
+    local day_width = slot_width * num_slots  -- 8 chars per day
 
     -- Build the graph rows (top to bottom = highest to lowest score)
     local score_step = 10 / #energy_categories
     for row = 1, #energy_categories do
         local row_score = math.floor((#energy_categories - row + 1) * score_step)
-        local label = string.sub(energy_categories[row], 1, 1)  -- First letter
-        local line = label .. " | "
+        local label = string.sub(energy_categories[row], 1, 1)
+        local line = label .. " | "  -- 4 chars: "E | "
 
         for _, day in ipairs(mood_data) do
-            local day_char = "."  -- Empty day marker
-            -- Check if this day has a score at this level
-            if #day.entries > 0 then
-                for _, entry in ipairs(day.entries) do
-                    if math.abs(entry.score - row_score) < score_step / 2 then
-                        day_char = "*"
-                        break
+            for _, slot in ipairs(time_slots) do
+                local slot_score = day.slot_scores[slot]
+                local marker = "."
+                if slot_score then
+                    if math.abs(slot_score - row_score) < score_step / 2 then
+                        marker = "*"
                     end
                 end
-            elseif day.score > 0 and math.abs(day.score - row_score) < score_step / 2 then
-                day_char = "*"
+                line = line .. marker .. " "  -- 2 chars per slot
             end
-
-            -- Center marker: equal padding on both sides
-            local half = math.floor(col_width / 2)
-            line = line .. string.rep(" ", half - 1) .. day_char .. string.rep(" ", col_width - half)
         end
 
         table.insert(widgets, TextWidget:new{
             text = line,
-            face = Font:getFace("cfont", 11),
+            face = Font:getFace("cfont", 10),
         })
     end
 
-    -- Baseline: matches "X | " prefix then column separators
-    local baseline = "  +-"
+    -- Baseline: same prefix width, then dashes matching day widths
+    local baseline = "  + "  -- 4 chars to match "X | "
     for _ = 1, 7 do
-        baseline = baseline .. string.rep("-", col_width)
+        baseline = baseline .. string.rep("-", day_width)
     end
-    baseline = baseline .. "+"
     table.insert(widgets, TextWidget:new{
         text = baseline,
-        face = Font:getFace("cfont", 11),
+        face = Font:getFace("cfont", 10),
     })
 
     -- Day labels: same prefix width, then centered labels
     local day_labels = "    "  -- 4 spaces to match "X | "
     for _, day in ipairs(mood_data) do
         local abbr = day.abbr
-        local total_pad = col_width - #abbr
+        local total_pad = day_width - #abbr
         local left = math.floor(total_pad / 2)
         local right = total_pad - left
         day_labels = day_labels .. string.rep(" ", left) .. abbr .. string.rep(" ", right)
     end
     table.insert(widgets, TextWidget:new{
         text = day_labels,
-        face = Font:getFace("cfont", 11),
+        face = Font:getFace("cfont", 10),
     })
 
     return widgets
@@ -663,12 +782,55 @@ function Journal:getReadingCorrelation()
 end
 
 --[[--
-Show dialog to add a reflection note.
+Show dialog to add or edit persistent notes.
+--]]
+function Journal:showEditPersistentNotes()
+    local existing_text = Data:loadPersistentNotes() or ""
+    local title = existing_text ~= "" and _("Edit Notes") or _("Add Notes")
+
+    self.notes_dialog = InputDialog:new{
+        title = title,
+        input = existing_text,
+        input_hint = _("Persistent notes that stay across days..."),
+        allow_newline = true,
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    callback = function()
+                        UIManager:close(self.notes_dialog)
+                    end,
+                },
+                {
+                    text = _("Save"),
+                    callback = function()
+                        local text = self.notes_dialog:getInputText()
+                        UIManager:close(self.notes_dialog)
+                        Data:savePersistentNotes(text)
+                        -- Refresh journal view
+                        UIManager:close(self.journal_widget)
+                        self:showJournalView()
+                        UIManager:setDirty("all", "ui")
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(self.notes_dialog)
+    self.notes_dialog:onShowKeyboard()
+end
+
+--[[--
+Show dialog to add or edit today's reflection.
 --]]
 function Journal:showAddReflection()
+    local existing_text = self:getTodayReflection() or ""
+    local title = existing_text ~= "" and _("Edit Today's Reflection") or _("Add Today's Reflection")
+
     self.reflection_dialog = InputDialog:new{
-        title = _("Today's Reflection"),
-        input_hint = _("What worked? What didn't?"),
+        title = title,
+        input = existing_text,
+        input_hint = _("What worked? What didn't? How do you feel?"),
         allow_newline = true,
         buttons = {
             {
@@ -685,6 +847,10 @@ function Journal:showAddReflection()
                         UIManager:close(self.reflection_dialog)
                         if text and text ~= "" then
                             self:saveReflection(text)
+                            -- Refresh journal view
+                            UIManager:close(self.journal_widget)
+                            self:showJournalView()
+                            UIManager:setDirty("all", "ui")
                         end
                     end,
                 },
@@ -806,6 +972,195 @@ Keep going!
         text = summary,
         width = Screen:getWidth() - 40,
     })
+end
+
+--[[--
+Build ASCII spider/radar chart for category performance.
+Shows completion rate per quest category as a diamond pattern.
+@param content_width number Available width for the chart
+@return table Array of TextWidget objects
+--]]
+function Journal:buildCategorySpiderChart(_content_width)
+    local widgets = {}
+    local quests = Data:loadAllQuests()
+    local settings = Data:loadUserSettings()
+    local categories = settings.quest_categories or {"Health", "Work", "Personal", "Learning"}
+    local today = os.date("%Y-%m-%d")
+
+    -- Calculate completion rate per category
+    local category_stats = {}
+    for _, cat in ipairs(categories) do
+        category_stats[cat] = { completed = 0, total = 0 }
+    end
+    category_stats["None"] = { completed = 0, total = 0 }
+
+    -- Count quests per category
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
+            local cat = quest.category or "None"
+            if not category_stats[cat] then
+                category_stats[cat] = { completed = 0, total = 0 }
+            end
+            category_stats[cat].total = category_stats[cat].total + 1
+            if quest.completed and quest.completed_date == today then
+                category_stats[cat].completed = category_stats[cat].completed + 1
+            end
+        end
+    end
+
+    -- Build data for spider chart (only categories with quests)
+    local active_categories = {}
+    for _, cat in ipairs(categories) do
+        if category_stats[cat] and category_stats[cat].total > 0 then
+            local rate = category_stats[cat].completed / category_stats[cat].total
+            table.insert(active_categories, { name = cat, rate = rate })
+        end
+    end
+
+    -- If no categorized quests, show a message
+    if #active_categories == 0 then
+        table.insert(widgets, TextWidget:new{
+            text = "No categorized quests yet",
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.gray(0.5),
+        })
+        return widgets
+    end
+
+    -- Build ASCII spider chart
+    -- Uses a diamond pattern with labels at compass points
+
+    local num_cats = #active_categories
+    local max_radius = 4  -- Max characters from center
+
+    if num_cats == 4 then
+        -- 4-category diamond: Top, Right, Bottom, Left
+        local top = active_categories[1]
+        local right = active_categories[2]
+        local bottom = active_categories[3]
+        local left = active_categories[4]
+
+        -- Calculate radius for each (0-max_radius based on rate)
+        local r_top = math.ceil(top.rate * max_radius)
+        local r_right = math.ceil(right.rate * max_radius)
+        local r_bottom = math.ceil(bottom.rate * max_radius)
+        local r_left = math.ceil(left.rate * max_radius)
+
+        -- Build the chart line by line
+        local center = max_radius + 8  -- Center position accounting for label
+
+        -- Top label
+        local top_label = string.format("%s %d%%", top.name:sub(1,6), math.floor(top.rate * 100))
+        local top_line = string.rep(" ", center - math.floor(#top_label/2)) .. top_label
+        table.insert(widgets, TextWidget:new{ text = top_line, face = Font:getFace("cfont", 10) })
+
+        -- Build diamond rows
+        for row = max_radius, 1, -1 do
+            local line = ""
+            -- Left label on middle row
+            if row == math.ceil(max_radius / 2) then
+                line = left.name:sub(1,4) .. " "
+            else
+                line = string.rep(" ", 5)
+            end
+
+            -- Build this row of the diamond
+            for col = 1, max_radius * 2 + 1 do
+                local dist_from_center = math.abs(col - max_radius - 1)
+                if row == r_top and col == max_radius + 1 then
+                    line = line .. "█"
+                elseif dist_from_center == 0 and row <= r_top then
+                    line = line .. "│"
+                elseif row == math.ceil(max_radius / 2) and col <= max_radius + 1 - r_left then
+                    line = line .. " "
+                elseif row == math.ceil(max_radius / 2) and col == max_radius + 1 - r_left then
+                    line = line .. "█"
+                elseif row == math.ceil(max_radius / 2) and col > max_radius + 1 and col <= max_radius + 1 + r_right then
+                    if col == max_radius + 1 + r_right then
+                        line = line .. "█"
+                    else
+                        line = line .. "─"
+                    end
+                elseif row == math.ceil(max_radius / 2) then
+                    if col < max_radius + 1 then
+                        line = line .. "─"
+                    else
+                        line = line .. " "
+                    end
+                else
+                    line = line .. " "
+                end
+            end
+
+            -- Right label on middle row
+            if row == math.ceil(max_radius / 2) then
+                line = line .. " " .. right.name:sub(1,4)
+            end
+
+            table.insert(widgets, TextWidget:new{ text = line, face = Font:getFace("cfont", 10) })
+        end
+
+        -- Center row
+        local center_line = string.rep(" ", 5)
+        for col = 1, max_radius * 2 + 1 do
+            if col == max_radius + 1 then
+                center_line = center_line .. "+"
+            elseif col >= max_radius + 1 - r_left and col <= max_radius + 1 + r_right then
+                center_line = center_line .. "─"
+            else
+                center_line = center_line .. " "
+            end
+        end
+        table.insert(widgets, TextWidget:new{ text = center_line, face = Font:getFace("cfont", 10) })
+
+        -- Bottom half (mirror of top)
+        for row = 1, max_radius do
+            local line = string.rep(" ", 5)
+            for col = 1, max_radius * 2 + 1 do
+                if row == r_bottom and col == max_radius + 1 then
+                    line = line .. "█"
+                elseif col == max_radius + 1 and row <= r_bottom then
+                    line = line .. "│"
+                else
+                    line = line .. " "
+                end
+            end
+            table.insert(widgets, TextWidget:new{ text = line, face = Font:getFace("cfont", 10) })
+        end
+
+        -- Bottom label
+        local bottom_label = string.format("%s %d%%", bottom.name:sub(1,6), math.floor(bottom.rate * 100))
+        local bottom_line = string.rep(" ", center - math.floor(#bottom_label/2)) .. bottom_label
+        table.insert(widgets, TextWidget:new{ text = bottom_line, face = Font:getFace("cfont", 10) })
+
+    else
+        -- Fallback: simple horizontal bar chart for any number of categories
+        for _, cat_data in ipairs(active_categories) do
+            local bar_width = 20
+            local filled = math.floor(cat_data.rate * bar_width)
+            local bar = string.rep("█", filled) .. string.rep("░", bar_width - filled)
+            local line = string.format("%-8s %s %3d%%", cat_data.name:sub(1,8), bar, math.floor(cat_data.rate * 100))
+            table.insert(widgets, TextWidget:new{
+                text = line,
+                face = Font:getFace("cfont", 11),
+            })
+        end
+    end
+
+    return widgets
+end
+
+--[[--
+Get today's reflection text.
+@return string|nil Reflection text or nil if none
+--]]
+function Journal:getTodayReflection()
+    local today = os.date("%Y-%m-%d")
+    local log = Data:getDayLog(today)
+    if log and log.reflection then
+        return log.reflection
+    end
+    return nil
 end
 
 return Journal

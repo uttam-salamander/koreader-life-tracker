@@ -77,6 +77,7 @@ function Data:loadUserSettings()
     return {
         energy_categories = s:readSetting("energy_categories") or {"Energetic", "Average", "Down"},
         time_slots = s:readSetting("time_slots") or {"Morning", "Afternoon", "Evening", "Night"},
+        quest_categories = s:readSetting("quest_categories") or {"Health", "Work", "Personal", "Learning"},
         streak_data = s:readSetting("streak_data") or {
             current = 0,
             longest = 0,
@@ -91,9 +92,33 @@ function Data:saveUserSettings(user_settings)
     local s = self:getSettings()
     s:saveSetting("energy_categories", user_settings.energy_categories)
     s:saveSetting("time_slots", user_settings.time_slots)
+    s:saveSetting("quest_categories", user_settings.quest_categories)
     s:saveSetting("streak_data", user_settings.streak_data)
     s:saveSetting("today_energy", user_settings.today_energy)
     s:saveSetting("today_date", user_settings.today_date)
+    s:flush()
+end
+
+-- ============================================
+-- Persistent Notes Operations
+-- ============================================
+
+--[[--
+Load persistent notes (not date-specific).
+@return string|nil Notes text or nil if none
+--]]
+function Data:loadPersistentNotes()
+    local s = self:getSettings()
+    return s:readSetting("persistent_notes")
+end
+
+--[[--
+Save persistent notes (not date-specific).
+@param text string Notes text
+--]]
+function Data:savePersistentNotes(text)
+    local s = self:getSettings()
+    s:saveSetting("persistent_notes", text)
     s:flush()
 end
 
@@ -177,6 +202,168 @@ function Data:uncompleteQuest(quest_type, quest_id)
     })
 end
 
+--[[--
+Increment progress for a progressive quest.
+Auto-completes when target is reached.
+@param quest_type string "daily", "weekly", or "monthly"
+@param quest_id number Quest ID
+@return table|nil Updated quest or nil if not found
+--]]
+function Data:incrementQuestProgress(quest_type, quest_id)
+    local quests = self:loadAllQuests()
+    for _, quest in ipairs(quests[quest_type]) do
+        if quest.id == quest_id and quest.is_progressive then
+            local today = os.date("%Y-%m-%d")
+
+            -- Reset progress if it's a new day
+            if quest.progress_last_date ~= today then
+                quest.progress_current = 0
+                quest.progress_last_date = today
+            end
+
+            -- Increment progress
+            quest.progress_current = (quest.progress_current or 0) + 1
+
+            -- Auto-complete if target reached
+            if quest.progress_current >= (quest.progress_target or 1) then
+                quest.completed = true
+                quest.completed_date = today
+            end
+
+            self:saveAllQuests(quests)
+            return quest
+        end
+    end
+    return nil
+end
+
+--[[--
+Decrement progress for a progressive quest.
+@param quest_type string "daily", "weekly", or "monthly"
+@param quest_id number Quest ID
+@return table|nil Updated quest or nil if not found
+--]]
+function Data:decrementQuestProgress(quest_type, quest_id)
+    local quests = self:loadAllQuests()
+    for _, quest in ipairs(quests[quest_type]) do
+        if quest.id == quest_id and quest.is_progressive then
+            local today = os.date("%Y-%m-%d")
+
+            -- Reset progress if it's a new day
+            if quest.progress_last_date ~= today then
+                quest.progress_current = 0
+                quest.progress_last_date = today
+            end
+
+            -- Decrement progress (min 0)
+            quest.progress_current = math.max(0, (quest.progress_current or 0) - 1)
+
+            -- Un-complete if below target
+            if quest.progress_current < (quest.progress_target or 1) then
+                quest.completed = false
+            end
+
+            self:saveAllQuests(quests)
+            return quest
+        end
+    end
+    return nil
+end
+
+--[[--
+Set progress for a progressive quest to a specific value.
+@param quest_type string "daily", "weekly", or "monthly"
+@param quest_id number Quest ID
+@param value number Progress value to set
+@return table|nil Updated quest or nil if not found
+--]]
+function Data:setQuestProgress(quest_type, quest_id, value)
+    local quests = self:loadAllQuests()
+    for _, quest in ipairs(quests[quest_type]) do
+        if quest.id == quest_id and quest.is_progressive then
+            local today = os.date("%Y-%m-%d")
+
+            quest.progress_current = math.max(0, value)
+            quest.progress_last_date = today
+
+            -- Auto-complete if target reached
+            if quest.progress_current >= (quest.progress_target or 1) then
+                quest.completed = true
+                quest.completed_date = today
+            else
+                quest.completed = false
+            end
+
+            self:saveAllQuests(quests)
+            return quest
+        end
+    end
+    return nil
+end
+
+--[[--
+Reset daily progress for all progressive quests.
+Called when a new day starts.
+--]]
+function Data:resetDailyProgress()
+    local today = os.date("%Y-%m-%d")
+    local quests = self:loadAllQuests()
+    local changed = false
+
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type]) do
+            if quest.is_progressive and quest.progress_last_date ~= today then
+                quest.progress_current = 0
+                quest.progress_last_date = today
+                quest.completed = false
+                changed = true
+            end
+        end
+    end
+
+    if changed then
+        self:saveAllQuests(quests)
+    end
+end
+
+--[[--
+Map an hour of day to a time slot name.
+@param hour number Hour of day (0-23)
+@param time_slots table Array of time slot names (default: Morning, Afternoon, Evening, Night)
+@return string Time slot name
+--]]
+function Data:hourToTimeSlot(hour, time_slots)
+    time_slots = time_slots or {"Morning", "Afternoon", "Evening", "Night"}
+    local num_slots = #time_slots
+
+    if num_slots == 4 then
+        -- Standard 4-slot breakdown
+        if hour >= 5 and hour < 12 then
+            return time_slots[1]  -- Morning: 5am-12pm
+        elseif hour >= 12 and hour < 17 then
+            return time_slots[2]  -- Afternoon: 12pm-5pm
+        elseif hour >= 17 and hour < 21 then
+            return time_slots[3]  -- Evening: 5pm-9pm
+        else
+            return time_slots[4]  -- Night: 9pm-5am
+        end
+    elseif num_slots == 3 then
+        -- 3-slot breakdown
+        if hour >= 5 and hour < 12 then
+            return time_slots[1]  -- Morning
+        elseif hour >= 12 and hour < 18 then
+            return time_slots[2]  -- Afternoon
+        else
+            return time_slots[3]  -- Evening/Night
+        end
+    else
+        -- Generic breakdown: divide 24 hours by number of slots
+        local hours_per_slot = 24 / num_slots
+        local slot_index = math.floor(hour / hours_per_slot) + 1
+        return time_slots[math.min(slot_index, num_slots)]
+    end
+end
+
 -- ============================================
 -- Daily Log Operations (for heatmap & journal)
 -- ============================================
@@ -220,8 +407,9 @@ Allows multiple mood entries per day for intra-day tracking.
 @param date string Date in YYYY-MM-DD format
 @param hour number Hour of day (0-23)
 @param energy string Energy level name
+@param time_slots table Optional array of time slot names for mapping
 --]]
-function Data:addMoodEntry(date, hour, energy)
+function Data:addMoodEntry(date, hour, energy, time_slots)
     local logs = self:loadDailyLogs()
     local entry = logs[date] or {}
 
@@ -230,9 +418,13 @@ function Data:addMoodEntry(date, hour, energy)
         entry.energy_entries = {}
     end
 
-    -- Add new entry with hour and energy
+    -- Map hour to time slot
+    local time_slot = self:hourToTimeSlot(hour, time_slots)
+
+    -- Add new entry with hour, time_slot, and energy
     table.insert(entry.energy_entries, {
         hour = hour,
+        time_slot = time_slot,
         energy = energy,
     })
 

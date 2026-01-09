@@ -17,6 +17,7 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local InputDialog = require("ui/widget/inputdialog")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ProgressWidget = require("ui/widget/progresswidget")
@@ -165,7 +166,7 @@ function Dashboard:setTodayEnergy(energy)
 
     -- Also add timestamped mood entry for detailed tracking
     local current_hour = tonumber(os.date("%H"))
-    Data:addMoodEntry(today, current_hour, energy)
+    Data:addMoodEntry(today, current_hour, energy, self.user_settings.time_slots)
 
     -- Refresh dashboard
     if self.dashboard_widget then
@@ -342,7 +343,7 @@ function Dashboard:showDashboardView()
     })
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
-    local heatmap_widget = self:buildDynamicHeatmap()
+    local heatmap_widget = self:buildDynamicHeatmap(content_width)
     if heatmap_widget then
         table.insert(content, heatmap_widget)
     end
@@ -769,74 +770,179 @@ Tracks Y position for gesture handling.
 --]]
 function Dashboard:buildQuestRow(quest, quest_type)
     local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
-    local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
+    local today = os.date("%Y-%m-%d")
 
     local status_bg = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE
     local text_color = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
 
-    -- Quest title with optional streak
-    local quest_text = quest.title
-    if quest.streak and quest.streak > 0 then
-        quest_text = quest_text .. string.format(" (%d)", quest.streak)
+    -- Check if progressive quest needs daily reset
+    if quest.is_progressive and quest.progress_last_date ~= today then
+        quest.progress_current = 0
     end
 
-    local title_widget = TextWidget:new{
-        text = quest_text,
-        face = Font:getFace("cfont", 14),
-        fgcolor = text_color,
-        max_width = title_width - Size.padding.small * 2,
-    }
+    local row
 
-    -- Complete button (OK or X if already completed)
-    local complete_text = quest.completed and "X" or "OK"
-    local complete_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = TOUCH_TARGET_HEIGHT - 4,
-        padding = 2,
-        bordersize = 1,
-        background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
-            TextWidget:new{
-                text = complete_text,
-                face = Font:getFace("cfont", 12),
-                bold = true,
+    if quest.is_progressive then
+        -- Progressive quest layout: [−] [3/10] [+] [Title]
+        local SMALL_BUTTON_WIDTH = 35
+        local PROGRESS_WIDTH = 70
+        -- Total buttons/spans: 35 + 2 + 70 + 2 + 35 + padding.small = 144 + padding.small
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
+
+        -- Quest title with optional streak and category
+        local quest_text = quest.title
+        if quest.streak and quest.streak > 0 then
+            quest_text = quest_text .. string.format(" (%d)", quest.streak)
+        end
+
+        local title_widget = TextWidget:new{
+            text = quest_text,
+            face = Font:getFace("cfont", 13),
+            fgcolor = text_color,
+            max_width = title_width - Size.padding.small * 2,
+        }
+
+        -- Minus button
+        local minus_button = FrameContainer:new{
+            width = SMALL_BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "−",
+                    face = Font:getFace("cfont", 16),
+                    bold = true,
+                },
             },
-        },
-    }
+        }
 
-    -- Skip button
-    local skip_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = TOUCH_TARGET_HEIGHT - 4,
-        padding = 2,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
-            TextWidget:new{
-                text = "Skip",
-                face = Font:getFace("cfont", 10),
+        -- Progress display
+        local current = quest.progress_current or 0
+        local target = quest.progress_target or 1
+        local pct = math.min(1, current / target)
+        local progress_bg = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
+        local progress_text = string.format("%d/%d", current, target)
+
+        local progress_display = FrameContainer:new{
+            width = PROGRESS_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = progress_bg,
+            CenterContainer:new{
+                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = progress_text,
+                    face = Font:getFace("cfont", 11),
+                    bold = quest.completed,
+                },
             },
-        },
-    }
+        }
 
-    -- Put buttons on LEFT for easier tapping, then title
-    local row = HorizontalGroup:new{
-        align = "center",
-        complete_button,
-        HorizontalSpan:new{ width = 2 },
-        skip_button,
-        HorizontalSpan:new{ width = Size.padding.small },
-        FrameContainer:new{
-            width = title_width,
-            height = TOUCH_TARGET_HEIGHT,
-            padding = Size.padding.small,
-            bordersize = 0,
-            background = status_bg,
-            title_widget,
-        },
-    }
+        -- Plus button
+        local plus_button = FrameContainer:new{
+            width = SMALL_BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "+",
+                    face = Font:getFace("cfont", 16),
+                    bold = true,
+                },
+            },
+        }
+
+        row = HorizontalGroup:new{
+            align = "center",
+            minus_button,
+            HorizontalSpan:new{ width = 2 },
+            progress_display,
+            HorizontalSpan:new{ width = 2 },
+            plus_button,
+            HorizontalSpan:new{ width = Size.padding.small },
+            FrameContainer:new{
+                width = title_width,
+                height = TOUCH_TARGET_HEIGHT,
+                padding = Size.padding.small,
+                bordersize = 0,
+                background = status_bg,
+                title_widget,
+            },
+        }
+    else
+        -- Binary quest layout: [OK] [Skip] [Title]
+        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
+
+        -- Quest title with optional streak
+        local quest_text = quest.title
+        if quest.streak and quest.streak > 0 then
+            quest_text = quest_text .. string.format(" (%d)", quest.streak)
+        end
+
+        local title_widget = TextWidget:new{
+            text = quest_text,
+            face = Font:getFace("cfont", 14),
+            fgcolor = text_color,
+            max_width = title_width - Size.padding.small * 2,
+        }
+
+        -- Complete button (OK or X if already completed)
+        local complete_text = quest.completed and "X" or "OK"
+        local complete_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = complete_text,
+                    face = Font:getFace("cfont", 12),
+                    bold = true,
+                },
+            },
+        }
+
+        -- Skip button
+        local skip_button = FrameContainer:new{
+            width = BUTTON_WIDTH,
+            height = TOUCH_TARGET_HEIGHT - 4,
+            padding = 2,
+            bordersize = 1,
+            background = Blitbuffer.COLOR_WHITE,
+            CenterContainer:new{
+                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                TextWidget:new{
+                    text = "Skip",
+                    face = Font:getFace("cfont", 10),
+                },
+            },
+        }
+
+        row = HorizontalGroup:new{
+            align = "center",
+            complete_button,
+            HorizontalSpan:new{ width = 2 },
+            skip_button,
+            HorizontalSpan:new{ width = Size.padding.small },
+            FrameContainer:new{
+                width = title_width,
+                height = TOUCH_TARGET_HEIGHT,
+                padding = Size.padding.small,
+                bordersize = 0,
+                background = status_bg,
+                title_widget,
+            },
+        }
+    end
 
     local quest_row = FrameContainer:new{
         width = content_width,
@@ -929,25 +1035,51 @@ function Dashboard:setupQuestTapHandlers()
         self.dashboard_widget["on" .. row_gesture] = function(_, _, ges)
             local logger = require("logger")
 
-            -- Buttons are on LEFT: OK (0-11%), Skip (11-22%), Title (22%+)
             local tap_x = ges.pos.x - Size.padding.large  -- Relative to content start
             local row_width = content_width
-            local tap_percent = tap_x / row_width
 
-            logger.info("Quest tap: x=", ges.pos.x, "relative=", tap_x, "percent=", tap_percent)
+            if quest.is_progressive then
+                -- Progressive quest layout: [−] [3/10] [+] [Title]
+                -- Layout: minus(35) + span(2) + progress(70) + span(2) + plus(35) + span(padding.small) + title
+                local SMALL_BUTTON_WIDTH = 35
+                local PROGRESS_WIDTH = 70
 
-            if tap_percent < 0.11 then
-                -- Leftmost ~11% = OK button (50px / ~462px)
-                logger.info("-> OK detected")
-                dashboard:toggleQuestComplete(quest, quest_type)
-            elseif tap_percent < 0.22 then
-                -- Next ~11% = Skip button
-                logger.info("-> SKIP detected")
-                dashboard:skipQuest(quest, quest_type)
+                if tap_x < SMALL_BUTTON_WIDTH then
+                    -- Minus button
+                    logger.info("-> MINUS detected")
+                    dashboard:decrementQuestProgress(quest, quest_type)
+                elseif tap_x < SMALL_BUTTON_WIDTH + 2 + PROGRESS_WIDTH then
+                    -- Progress display - show manual input
+                    logger.info("-> PROGRESS detected")
+                    dashboard:showProgressInput(quest, quest_type)
+                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 2 + PROGRESS_WIDTH + 2 then
+                    -- Plus button
+                    logger.info("-> PLUS detected")
+                    dashboard:incrementQuestProgress(quest, quest_type)
+                else
+                    -- Title area
+                    logger.info("-> TITLE detected")
+                    dashboard:showQuestActions(quest, quest_type)
+                end
             else
-                -- Right 78% = Title area
-                logger.info("-> TITLE detected")
-                dashboard:showQuestActions(quest, quest_type)
+                -- Binary quest: Buttons are on LEFT: OK (0-11%), Skip (11-22%), Title (22%+)
+                local tap_percent = tap_x / row_width
+
+                logger.info("Quest tap: x=", ges.pos.x, "relative=", tap_x, "percent=", tap_percent)
+
+                if tap_percent < 0.11 then
+                    -- Leftmost ~11% = OK button (50px / ~462px)
+                    logger.info("-> OK detected")
+                    dashboard:toggleQuestComplete(quest, quest_type)
+                elseif tap_percent < 0.22 then
+                    -- Next ~11% = Skip button
+                    logger.info("-> SKIP detected")
+                    dashboard:skipQuest(quest, quest_type)
+                else
+                    -- Right 78% = Title area
+                    logger.info("-> TITLE detected")
+                    dashboard:showQuestActions(quest, quest_type)
+                end
             end
             return true
         end
@@ -986,6 +1118,137 @@ function Dashboard:skipQuest(quest, quest_type)
             timeout = 1,
         })
     end)
+end
+
+--[[--
+Increment progress for a progressive quest.
+--]]
+function Dashboard:incrementQuestProgress(quest, quest_type)
+    local updated = Data:incrementQuestProgress(quest_type, quest.id)
+    if updated then
+        -- Refresh dashboard
+        if self.dashboard_widget then
+            UIManager:close(self.dashboard_widget)
+        end
+        self:showDashboardView()
+        UIManager:setDirty("all", "ui")
+
+        if updated.completed then
+            -- Update daily log for heatmap
+            self:updateDailyLog()
+            UIManager:nextTick(function()
+                UIManager:show(InfoMessage:new{
+                    text = _("Quest completed!"),
+                    timeout = 1,
+                })
+            end)
+        end
+    end
+end
+
+--[[--
+Decrement progress for a progressive quest.
+--]]
+function Dashboard:decrementQuestProgress(quest, quest_type)
+    local updated = Data:decrementQuestProgress(quest_type, quest.id)
+    if updated then
+        -- Refresh dashboard
+        if self.dashboard_widget then
+            UIManager:close(self.dashboard_widget)
+        end
+        self:showDashboardView()
+        UIManager:setDirty("all", "ui")
+    end
+end
+
+--[[--
+Update daily log with quest completion stats (for heatmap).
+--]]
+function Dashboard:updateDailyLog()
+    local today = Data:getCurrentDate()
+    local quests = Data:loadAllQuests()
+    local logs = Data:loadDailyLogs()
+
+    if not quests then return end
+    if not logs then logs = {} end
+
+    local total = 0
+    local completed = 0
+
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
+            total = total + 1
+            if quest.completed and quest.completed_date == today then
+                completed = completed + 1
+            end
+        end
+    end
+
+    if not logs[today] then
+        logs[today] = {}
+    end
+    logs[today].quests_total = total
+    logs[today].quests_completed = completed
+
+    Data:saveDailyLogs(logs)
+end
+
+--[[--
+Show input dialog for manually setting progress.
+--]]
+function Dashboard:showProgressInput(quest, quest_type)
+    local dialog
+    dialog = InputDialog:new{
+        title = string.format(_("Set Progress for '%s'"), quest.title),
+        input = tostring(quest.progress_current or 0),
+        input_hint = string.format(_("Target: %d %s"),
+            quest.progress_target or 1,
+            quest.progress_unit or ""),
+        input_type = "number",
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            },
+            {
+                text = _("Set"),
+                is_enter_default = true,
+                callback = function()
+                    local value = tonumber(dialog:getInputText())
+                    if value and value >= 0 then
+                        local updated = Data:setQuestProgress(quest_type, quest.id, value)
+                        UIManager:close(dialog)
+
+                        -- Refresh dashboard
+                        if self.dashboard_widget then
+                            UIManager:close(self.dashboard_widget)
+                        end
+                        self:showDashboardView()
+                        UIManager:setDirty("all", "ui")
+
+                        if updated and updated.completed then
+                            self:updateDailyLog()
+                            UIManager:nextTick(function()
+                                UIManager:show(InfoMessage:new{
+                                    text = _("Quest completed!"),
+                                    timeout = 1,
+                                })
+                            end)
+                        end
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a valid number"),
+                            timeout = 2,
+                        })
+                    end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 --[[--
@@ -1108,16 +1371,25 @@ end
 
 --[[--
 Build dynamic heatmap with categories based on actual quest data.
+Renders in multiple rows if needed to fit content width.
+@param content_width number Available width in pixels
 --]]
-function Dashboard:buildDynamicHeatmap()
+function Dashboard:buildDynamicHeatmap(content_width)
     local logs = Data:loadDailyLogs()
     local today = os.time()
-    local weeks = 12
+    local total_weeks = 12
     local days_per_week = 7
+
+    -- Calculate how many weeks can fit per row
+    -- Block characters (░▒▓█) are wider than normal chars - roughly 18-20px each at font 12
+    -- To prevent horizontal scroll, we limit to 6 weeks per row max
+    local block_char_width = 20  -- Conservative estimate for block chars
+    local calculated_weeks = math.floor(content_width / block_char_width)
+    local weeks_per_row = math.max(4, math.min(calculated_weeks, 6))  -- Max 6 weeks per row
 
     -- Find the maximum completions in any day to set dynamic thresholds
     local max_completions = 0
-    for day = 0, weeks * days_per_week - 1 do
+    for day = 0, total_weeks * days_per_week - 1 do
         local date_time = today - day * 86400
         local date_str = os.date("%Y-%m-%d", date_time)
         local log = logs[date_str]
@@ -1136,48 +1408,85 @@ function Dashboard:buildDynamicHeatmap()
         t3 = math.ceil(max_completions * 3 / 4)
     end
 
-    -- Build heatmap string (text-based for e-ink)
-    local lines = {}
-    for day = 0, days_per_week - 1 do
-        local row = ""
-        for week = weeks - 1, 0, -1 do
-            local date_time = today - (week * 7 + (6 - day)) * 86400
-            local date_str = os.date("%Y-%m-%d", date_time)
-            local log = logs[date_str]
-            local count = 0
-            if log and log.quests_completed then
-                count = log.quests_completed
-            end
-
-            -- Choose character based on dynamic thresholds
-            if count == 0 then
-                row = row .. "░"
-            elseif count <= t1 then
-                row = row .. "▒"
-            elseif count <= t2 then
-                row = row .. "▓"
-            else
-                row = row .. "█"
-            end
+    -- Helper to get heat character for a count
+    local function get_heat_char(count)
+        if count == 0 then
+            return "░"
+        elseif count <= t1 then
+            return "▒"
+        elseif count <= t2 then
+            return "▓"
+        else
+            return "█"
         end
-        table.insert(lines, row)
     end
 
-    local heatmap_text = table.concat(lines, "\n")
-
     local heatmap_group = VerticalGroup:new{ align = "left" }
-    table.insert(heatmap_group, TextWidget:new{
-        text = heatmap_text,
-        face = Font:getFace("cfont", 12),
-    })
+
+    -- Build heatmap in sections (each section is weeks_per_row weeks)
+    local num_sections = math.ceil(total_weeks / weeks_per_row)
+
+    for section = 0, num_sections - 1 do
+        local start_week = section * weeks_per_row
+        local end_week = math.min(start_week + weeks_per_row, total_weeks) - 1
+
+        -- Section label (e.g., "Weeks 1-6" or "Recent")
+        local section_label
+        if num_sections > 1 then
+            local weeks_ago_end = total_weeks - start_week
+            local weeks_ago_start = total_weeks - end_week - 1
+            if section == num_sections - 1 then
+                section_label = string.format("Recent (%d wks)", end_week - start_week + 1)
+            else
+                section_label = string.format("%d-%d wks ago", weeks_ago_start, weeks_ago_end)
+            end
+            table.insert(heatmap_group, TextWidget:new{
+                text = section_label,
+                face = Font:getFace("cfont", 9),
+                fgcolor = Blitbuffer.gray(0.5),
+            })
+        end
+
+        -- Build rows for this section (7 rows for days of week)
+        local lines = {}
+        for day = 0, days_per_week - 1 do
+            local row = ""
+            -- Iterate weeks from oldest to newest within this section
+            for week = end_week, start_week, -1 do
+                local date_time = today - (week * 7 + (6 - day)) * 86400
+                local date_str = os.date("%Y-%m-%d", date_time)
+                local log = logs[date_str]
+                local count = 0
+                if log and log.quests_completed then
+                    count = log.quests_completed
+                end
+                row = row .. get_heat_char(count)
+            end
+            table.insert(lines, row)
+        end
+
+        local heatmap_text = table.concat(lines, "\n")
+        table.insert(heatmap_group, TextWidget:new{
+            text = heatmap_text,
+            face = Font:getFace("cfont", 12),
+            max_width = content_width,
+        })
+
+        -- Add spacing between sections
+        if section < num_sections - 1 then
+            table.insert(heatmap_group, VerticalSpan:new{ width = Size.padding.small })
+        end
+    end
+
     table.insert(heatmap_group, VerticalSpan:new{ width = Size.padding.small })
 
-    -- Dynamic legend
-    local legend = string.format("░=0  ▒=1-%d  ▓=%d-%d  █=%d+", t1, t1+1, t2, t3)
+    -- Dynamic legend (compact to fit width)
+    local legend = string.format("░=0 ▒=1-%d ▓=%d-%d █=%d+", t1, t1+1, t2, t3)
     table.insert(heatmap_group, TextWidget:new{
         text = legend,
         face = Font:getFace("cfont", 10),
         fgcolor = Blitbuffer.gray(0.4),
+        max_width = content_width,
     })
 
     return heatmap_group
