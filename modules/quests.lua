@@ -1122,6 +1122,9 @@ function Quests:showEditQuestDialog(quest)
     self:showQuestTitleInput(true)
 end
 
+-- Maximum quest title length
+local MAX_QUEST_TITLE_LENGTH = 200
+
 --[[--
 Show title input step.
 --]]
@@ -1130,7 +1133,7 @@ function Quests:showQuestTitleInput(is_edit)
     dialog = InputDialog:new{
         title = is_edit and _("Edit Quest") or _("New Quest"),
         input = self.new_quest.title,
-        input_hint = _("Quest title"),
+        input_hint = _("Quest title (max 200 chars)"),
         buttons = {{
             {
                 text = _("Cancel"),
@@ -1142,14 +1145,22 @@ function Quests:showQuestTitleInput(is_edit)
                 text = _("Next: Time Slot"),
                 is_enter_default = true,
                 callback = function()
-                    self.new_quest.title = dialog:getInputText()
-                    if self.new_quest.title == "" then
+                    local title = dialog:getInputText()
+                    if not title or title == "" then
                         UIManager:show(InfoMessage:new{
                             text = _("Please enter a title"),
                             timeout = 2,
                         })
                         return
                     end
+                    if #title > MAX_QUEST_TITLE_LENGTH then
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("Title too long (%d chars). Max is %d."), #title, MAX_QUEST_TITLE_LENGTH),
+                            timeout = 3,
+                        })
+                        return
+                    end
+                    self.new_quest.title = title
                     UIManager:close(dialog)
                     self:showTimeSlotSelector(is_edit)
                 end,

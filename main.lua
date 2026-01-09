@@ -27,6 +27,7 @@ local LifeTracker = WidgetContainer:extend{
     name = "lifetracker",
     is_doc_only = false,
     reminder_timer_active = false,  -- Track if timer is running
+    reminder_task = nil,  -- Store scheduled task for cleanup
 }
 
 function LifeTracker:init()
@@ -208,14 +209,19 @@ function LifeTracker:doReminderCheck()
 
     self:checkReminders()
 
-    -- Schedule next check (60 seconds)
-    UIManager:scheduleIn(60, function()
+    -- Schedule next check (60 seconds) and store reference for cleanup
+    self.reminder_task = UIManager:scheduleIn(60, function()
         self:doReminderCheck()
     end)
 end
 
 function LifeTracker:stopReminderCheck()
     self.reminder_timer_active = false
+    -- Cancel any pending timer to prevent memory leak
+    if self.reminder_task then
+        UIManager:unschedule(self.reminder_task)
+        self.reminder_task = nil
+    end
 end
 
 --[[--
@@ -276,7 +282,11 @@ function LifeTracker:onFlushSettings()
     data:flushAll()
 
     -- Create daily auto-backup (keeps last 7 days)
-    data:autoBackup(7)
+    local ok, msg = data:autoBackup(7)
+    if not ok and msg ~= "Auto-backup already exists for today" then
+        local logger = require("logger")
+        logger.warn("Life Tracker auto-backup failed:", msg)
+    end
 end
 
 --[[--

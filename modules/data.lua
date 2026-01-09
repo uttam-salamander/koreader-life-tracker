@@ -145,10 +145,18 @@ function Data:saveAllQuests(quests)
     q:flush()
 end
 
+--[[--
+Generate a unique sequential ID.
+Uses persistent counter to prevent collisions.
+@return number Unique ID
+--]]
 function Data:generateUniqueId()
-    -- Use timestamp + random number to prevent ID collisions
-    -- when multiple items are created within the same second
-    return os.time() * 1000 + math.random(0, 999)
+    local s = self:getSettings()
+    local last_id = s:readSetting("last_generated_id") or (os.time() * 1000)
+    last_id = last_id + 1
+    s:saveSetting("last_generated_id", last_id)
+    s:flush()
+    return last_id
 end
 
 function Data:addQuest(quest_type, quest)
@@ -284,12 +292,14 @@ function Data:setQuestProgress(quest_type, quest_id, value)
     for _, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
+            local target = quest.progress_target or 1
 
-            quest.progress_current = math.max(0, value)
+            -- Clamp value between 0 and target (can't exceed target)
+            quest.progress_current = math.max(0, math.min(value, target))
             quest.progress_last_date = today
 
             -- Auto-complete if target reached
-            if quest.progress_current >= (quest.progress_target or 1) then
+            if quest.progress_current >= target then
                 quest.completed = true
                 quest.completed_date = today
             else
@@ -538,13 +548,65 @@ end
 
 --[[--
 Ensure the backup directory exists.
+@return boolean Success status
 --]]
 function Data:ensureBackupDir()
     local lfs = require("libs/libkoreader-lfs")
     local backup_dir = self:getBackupDir()
     if lfs.attributes(backup_dir, "mode") ~= "directory" then
-        lfs.mkdir(backup_dir)
+        local ok = lfs.mkdir(backup_dir)
+        return ok ~= nil
     end
+    return true
+end
+
+--[[--
+Sanitize a filename to prevent path traversal attacks.
+Removes directory separators and dangerous characters.
+@param filename string The filename to sanitize
+@return string Sanitized filename
+--]]
+function Data:sanitizeFilename(filename)
+    if not filename or filename == "" then
+        return nil
+    end
+    -- Remove path separators and parent directory references
+    local sanitized = filename:gsub("[/\\]", "_")
+    sanitized = sanitized:gsub("%.%.", "_")
+    -- Ensure it ends with .json
+    if not sanitized:match("%.json$") then
+        sanitized = sanitized .. ".json"
+    end
+    -- Ensure filename is not empty after sanitization
+    if sanitized == ".json" or sanitized == "" then
+        return nil
+    end
+    return sanitized
+end
+
+--[[--
+Validate that a filepath is within the backup directory.
+Prevents path traversal attacks on import.
+@param filepath string The filepath to validate
+@return boolean Whether the path is safe
+--]]
+function Data:isValidBackupPath(filepath)
+    if not filepath then
+        return false
+    end
+    local backup_dir = self:getBackupDir()
+    -- Normalize: ensure backup_dir ends without slash for consistent comparison
+    backup_dir = backup_dir:gsub("/$", "")
+    -- Check that filepath starts with backup_dir
+    if not filepath:sub(1, #backup_dir) == backup_dir then
+        return false
+    end
+    -- Check for path traversal attempts in the remaining path
+    local remaining = filepath:sub(#backup_dir + 1)
+    if remaining:match("%.%.") then
+        return false
+    end
+    return true
 end
 
 --[[--
@@ -552,6 +614,9 @@ Create a backup of all plugin data.
 @return table Backup data structure with all settings, quests, logs, and reminders
 --]]
 function Data:createBackup()
+    -- Flush all caches first to ensure consistent snapshot
+    self:flushAll()
+
     return {
         version = BACKUP_VERSION,
         created_at = os.date("%Y-%m-%d %H:%M:%S"),
@@ -567,17 +632,17 @@ function Data:createBackup()
 end
 
 --[[--
-Restore plugin data from a backup.
-@param backup table Backup data structure
-@return boolean, string Success status and message
+Validate backup data structure before restore.
+@param backup table Backup data to validate
+@return boolean, string Success status and error message if any
 --]]
-function Data:restoreFromBackup(backup)
+function Data:validateBackupStructure(backup)
     if not backup then
         return false, "Invalid backup data"
     end
 
-    if not backup.version then
-        return false, "Backup version not found"
+    if type(backup.version) ~= "number" then
+        return false, "Backup version not found or invalid"
     end
 
     if backup.version > BACKUP_VERSION then
@@ -585,9 +650,67 @@ function Data:restoreFromBackup(backup)
     end
 
     local data = backup.data
-    if not data then
+    if type(data) ~= "table" then
         return false, "No data found in backup"
     end
+
+    -- Validate settings structure
+    if data.settings then
+        if type(data.settings) ~= "table" then
+            return false, "Invalid settings format"
+        end
+        if data.settings.energy_categories and type(data.settings.energy_categories) ~= "table" then
+            return false, "Invalid energy_categories format"
+        end
+        if data.settings.time_slots and type(data.settings.time_slots) ~= "table" then
+            return false, "Invalid time_slots format"
+        end
+    end
+
+    -- Validate quests structure
+    if data.quests then
+        if type(data.quests) ~= "table" then
+            return false, "Invalid quests format"
+        end
+        for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+            if data.quests[quest_type] and type(data.quests[quest_type]) ~= "table" then
+                return false, "Invalid " .. quest_type .. " quests format"
+            end
+        end
+    end
+
+    -- Validate logs structure
+    if data.logs and type(data.logs) ~= "table" then
+        return false, "Invalid logs format"
+    end
+
+    -- Validate reminders structure
+    if data.reminders and type(data.reminders) ~= "table" then
+        return false, "Invalid reminders format"
+    end
+
+    return true, nil
+end
+
+--[[--
+Restore plugin data from a backup.
+@param backup table Backup data structure
+@return boolean, string Success status and message
+--]]
+function Data:restoreFromBackup(backup)
+    -- Validate backup structure first
+    local valid, err = self:validateBackupStructure(backup)
+    if not valid then
+        return false, err
+    end
+
+    -- Clear caches BEFORE restore to prevent stale data issues
+    settings_cache = nil
+    quests_cache = nil
+    logs_cache = nil
+    reminders_cache = nil
+
+    local data = backup.data
 
     -- Restore each data section
     if data.settings then
@@ -610,41 +733,62 @@ function Data:restoreFromBackup(backup)
         self:saveReminders(data.reminders)
     end
 
-    -- Clear caches to force reload
-    settings_cache = nil
-    quests_cache = nil
-    logs_cache = nil
-    reminders_cache = nil
-
     return true, "Data restored successfully"
 end
 
 --[[--
-Export backup to a JSON file.
+Export backup to a JSON file with atomic write.
 @param filename string Optional filename (without path), defaults to timestamped name
 @return boolean, string Success status and filepath or error message
 --]]
 function Data:exportBackupToFile(filename)
     local rapidjson = require("rapidjson")
+    local lfs = require("libs/libkoreader-lfs")
 
-    self:ensureBackupDir()
+    if not self:ensureBackupDir() then
+        return false, "Failed to create backup directory"
+    end
 
     -- Generate filename if not provided
     if not filename or filename == "" then
         filename = "lifetracker_backup_" .. os.date("%Y%m%d_%H%M%S") .. ".json"
     end
 
+    -- Sanitize filename to prevent path traversal
+    filename = self:sanitizeFilename(filename)
+    if not filename then
+        return false, "Invalid filename"
+    end
+
     local filepath = self:getBackupDir() .. "/" .. filename
+    local temp_filepath = filepath .. ".tmp"
     local backup = self:createBackup()
 
-    -- Use rapidjson.dump for pretty-printed output
-    local ok, err = rapidjson.dump(backup, filepath, { pretty = true, sort_keys = true })
+    -- Write to temp file first (atomic write pattern)
+    local ok, err = pcall(function()
+        return rapidjson.dump(backup, temp_filepath, { pretty = true, sort_keys = true })
+    end)
 
-    if ok then
-        return true, filepath
-    else
-        return false, err or "Failed to write backup file"
+    if not ok then
+        pcall(os.remove, temp_filepath)
+        return false, "Failed to write backup: " .. tostring(err)
     end
+
+    -- Verify temp file was created
+    if lfs.attributes(temp_filepath, "mode") ~= "file" then
+        return false, "Failed to create backup file"
+    end
+
+    -- Remove old file if exists, then rename temp to final
+    pcall(os.remove, filepath)
+    local rename_ok, rename_err = os.rename(temp_filepath, filepath)
+
+    if not rename_ok then
+        pcall(os.remove, temp_filepath)
+        return false, "Failed to finalize backup: " .. tostring(rename_err)
+    end
+
+    return true, filepath
 end
 
 --[[--
@@ -654,18 +798,27 @@ Import backup from a JSON file.
 --]]
 function Data:importBackupFromFile(filepath)
     local rapidjson = require("rapidjson")
+    local lfs = require("libs/libkoreader-lfs")
+
+    -- Validate path is within backup directory (prevent path traversal)
+    if not self:isValidBackupPath(filepath) then
+        return false, "Invalid backup file path"
+    end
 
     -- Check if file exists
-    local lfs = require("libs/libkoreader-lfs")
     if lfs.attributes(filepath, "mode") ~= "file" then
         return false, "Backup file not found"
     end
 
-    -- Load and parse the backup file
-    local backup, err = rapidjson.load(filepath)
+    -- Load and parse the backup file with error handling
+    local ok, backup = pcall(rapidjson.load, filepath)
+
+    if not ok then
+        return false, "Failed to parse backup file: " .. tostring(backup)
+    end
 
     if not backup then
-        return false, err or "Failed to parse backup file"
+        return false, "Backup file is empty or invalid"
     end
 
     return self:restoreFromBackup(backup)
@@ -684,27 +837,30 @@ function Data:listBackups()
     local backups = {}
 
     for filename in lfs.dir(backup_dir) do
-        if filename:match("%.json$") then
+        -- Only list lifetracker backup files (not arbitrary json files)
+        if filename:match("^lifetracker_.*%.json$") then
             local filepath = backup_dir .. "/" .. filename
             local attr = lfs.attributes(filepath)
 
-            -- Try to read backup metadata
-            local created_at = nil
-            local backup_data = rapidjson.load(filepath)
-            if backup_data and backup_data.created_at then
-                created_at = backup_data.created_at
-            end
+            if attr then
+                -- Try to read backup metadata with pcall to handle corrupted files
+                local created_at = nil
+                local ok, backup_data = pcall(rapidjson.load, filepath)
+                if ok and backup_data and backup_data.created_at then
+                    created_at = backup_data.created_at
+                end
 
-            table.insert(backups, {
-                filename = filename,
-                filepath = filepath,
-                created_at = created_at or os.date("%Y-%m-%d %H:%M:%S", attr.modification),
-                size = attr.size,
-            })
+                table.insert(backups, {
+                    filename = filename,
+                    filepath = filepath,
+                    created_at = created_at or os.date("%Y-%m-%d %H:%M:%S", attr.modification),
+                    size = attr.size,
+                })
+            end
         end
     end
 
-    -- Sort by modification time (newest first)
+    -- Sort by creation time (newest first)
     table.sort(backups, function(a, b)
         return a.created_at > b.created_at
     end)
@@ -715,9 +871,14 @@ end
 --[[--
 Delete a backup file.
 @param filepath string Full path to the backup file
-@return boolean Success status
+@return boolean, string Success status and error message
 --]]
 function Data:deleteBackup(filepath)
+    -- Validate path is within backup directory
+    if not self:isValidBackupPath(filepath) then
+        return false, "Invalid backup file path"
+    end
+
     local ok, err = os.remove(filepath)
     return ok ~= nil, err
 end

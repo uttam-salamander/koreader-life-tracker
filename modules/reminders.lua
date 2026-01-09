@@ -664,6 +664,9 @@ function Reminders:showReminderActions(reminder)
     UIManager:show(dialog)
 end
 
+-- Maximum reminder title length
+local MAX_REMINDER_TITLE_LENGTH = 200
+
 --[[--
 Show dialog to add a new reminder.
 --]]
@@ -671,7 +674,7 @@ function Reminders:showAddReminder()
     local dialog
     dialog = InputDialog:new{
         title = _("New Reminder"),
-        input_hint = _("What do you want to remember?"),
+        input_hint = _("What do you want to remember? (max 200 chars)"),
         buttons = {{
             {
                 text = _("Cancel"),
@@ -683,16 +686,58 @@ function Reminders:showAddReminder()
                 text = _("Next"),
                 callback = function()
                     local title = dialog:getInputText()
-                    UIManager:close(dialog)
-                    if title and title ~= "" then
-                        self:showTimeInput(title)
+                    if not title or title == "" then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a title"),
+                            timeout = 2,
+                        })
+                        return
                     end
+                    if #title > MAX_REMINDER_TITLE_LENGTH then
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("Title too long (%d chars). Max is %d."), #title, MAX_REMINDER_TITLE_LENGTH),
+                            timeout = 3,
+                        })
+                        return
+                    end
+                    UIManager:close(dialog)
+                    self:showTimeInput(title)
                 end,
             },
         }},
     }
     UIManager:show(dialog)
     dialog:onShowKeyboard()
+end
+
+--[[--
+Validate time string (HH:MM format with bounds checking).
+@param time_str string Time to validate
+@return boolean, string Valid status and normalized time (HH:MM) or error message
+--]]
+function Reminders:validateTime(time_str)
+    if not time_str then
+        return false, _("Please enter a time")
+    end
+
+    local hour, min = time_str:match("^(%d%d?):(%d%d)$")
+    if not hour or not min then
+        return false, _("Please enter time in HH:MM format")
+    end
+
+    hour = tonumber(hour)
+    min = tonumber(min)
+
+    if hour < 0 or hour > 23 then
+        return false, _("Hour must be 00-23")
+    end
+
+    if min < 0 or min > 59 then
+        return false, _("Minutes must be 00-59")
+    end
+
+    -- Return normalized time (always HH:MM with leading zeros)
+    return true, string.format("%02d:%02d", hour, min)
 end
 
 --[[--
@@ -717,11 +762,12 @@ function Reminders:showTimeInput(title)
                 callback = function()
                     local time = dialog:getInputText()
                     UIManager:close(dialog)
-                    if time and time:match("^%d%d?:%d%d$") then
-                        self:showDateSelection(title, time)
+                    local valid, result = self:validateTime(time)
+                    if valid then
+                        self:showDateSelection(title, result)
                     else
                         UIManager:show(InfoMessage:new{
-                            text = _("Please enter time in HH:MM format"),
+                            text = result,
                         })
                     end
                 end,
@@ -785,6 +831,51 @@ function Reminders:showDateSelection(title, time)
 end
 
 --[[--
+Validate date string (YYYY-MM-DD format with real date checking).
+@param date_str string Date to validate
+@return boolean, string Valid status and error message if invalid
+--]]
+function Reminders:validateDate(date_str)
+    if not date_str then
+        return false, _("Please enter a date")
+    end
+
+    local year, month, day = date_str:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    if not year or not month or not day then
+        return false, _("Please enter date in YYYY-MM-DD format")
+    end
+
+    year = tonumber(year)
+    month = tonumber(month)
+    day = tonumber(day)
+
+    -- Basic range checks
+    if year < 2020 or year > 2100 then
+        return false, _("Year must be 2020-2100")
+    end
+
+    if month < 1 or month > 12 then
+        return false, _("Month must be 01-12")
+    end
+
+    if day < 1 or day > 31 then
+        return false, _("Day must be 01-31")
+    end
+
+    -- Validate actual date by converting to timestamp and back
+    local time_table = {year = year, month = month, day = day, hour = 12}
+    local timestamp = os.time(time_table)
+    local check = os.date("*t", timestamp)
+
+    -- If the date was invalid (e.g., Feb 30), os.time normalizes it
+    if check.year ~= year or check.month ~= month or check.day ~= day then
+        return false, _("Invalid date (e.g., Feb 30 doesn't exist)")
+    end
+
+    return true, nil
+end
+
+--[[--
 Custom date input.
 --]]
 function Reminders:showCustomDateInput(title, time)
@@ -806,11 +897,12 @@ function Reminders:showCustomDateInput(title, time)
                 callback = function()
                     local date = dialog:getInputText()
                     UIManager:close(dialog)
-                    if date and date:match("^%d%d%d%d%-%d%d%-%d%d$") then
+                    local valid, err = self:validateDate(date)
+                    if valid then
                         self:showRepeatDays(title, time, date)
                     else
                         UIManager:show(InfoMessage:new{
-                            text = _("Please enter date in YYYY-MM-DD format"),
+                            text = err,
                         })
                     end
                 end,
