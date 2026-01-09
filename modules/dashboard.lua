@@ -138,7 +138,7 @@ function Dashboard:getDailyQuestStats()
 
     -- Filter by energy and count
     local filtered = self:filterQuestsByEnergy(all_quests.daily, today_energy)
-    for _, quest in ipairs(filtered) do
+    for __, quest in ipairs(filtered) do
         total = total + 1
         if quest.completed then
             completed = completed + 1
@@ -679,7 +679,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
     -- Group quests by time slot
     local quests_by_slot = {}
     local other_quests = {}
-    for _, quest in ipairs(filtered) do
+    for __, quest in ipairs(filtered) do
         if quest.time_slot then
             if not quests_by_slot[quest.time_slot] then
                 quests_by_slot[quest.time_slot] = {}
@@ -692,7 +692,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
 
     -- Show quests grouped by time slot
     local shown = 0
-    for _, slot in ipairs(time_slots) do
+    for __, slot in ipairs(time_slots) do
         local slot_quests = quests_by_slot[slot]
         if slot_quests and #slot_quests > 0 then
             -- Time slot sub-header (18px height)
@@ -703,7 +703,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
             })
             self.current_y = self.current_y + 18
 
-            for _, quest in ipairs(slot_quests) do
+            for __, quest in ipairs(slot_quests) do
                 if shown >= 8 then break end
                 local quest_row = self:buildQuestRow(quest, quest_type)
                 table.insert(section, quest_row)
@@ -714,7 +714,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
 
     -- Show quests without time slot
     if #other_quests > 0 and shown < 8 then
-        for _, quest in ipairs(other_quests) do
+        for __, quest in ipairs(other_quests) do
             if shown >= 8 then break end
             local quest_row = self:buildQuestRow(quest, quest_type)
             table.insert(section, quest_row)
@@ -754,7 +754,7 @@ function Dashboard:buildQuestSection(title, quests, today_energy, quest_type)
 
     -- Quest items (max 5 per section on dashboard)
     local shown = 0
-    for _, quest in ipairs(filtered) do
+    for __, quest in ipairs(filtered) do
         if shown >= 5 then break end
         local quest_row = self:buildQuestRow(quest, quest_type)
         table.insert(section, quest_row)
@@ -985,7 +985,7 @@ function Dashboard:filterQuestsByEnergy(quests, energy_level)
     local current_level = energy_index[energy_level] or 2  -- Default to middle
     local is_high_energy = (current_level == 1)
 
-    for _, quest in ipairs(quests) do
+    for __, quest in ipairs(quests) do
         local required_level = energy_index[quest.energy_required] or 0  -- 0 for "Any"
 
         -- Show if:
@@ -1093,7 +1093,7 @@ function Dashboard:skipQuest(quest, quest_type)
     local today = Data:getCurrentDate()
     local all_quests = Data:loadAllQuests()
 
-    for _, q in ipairs(all_quests[quest_type] or {}) do
+    for __, q in ipairs(all_quests[quest_type] or {}) do
         if q.id == quest.id then
             q.skipped_date = today
             break
@@ -1175,8 +1175,8 @@ function Dashboard:updateDailyLog()
     local total = 0
     local completed = 0
 
-    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _, quest in ipairs(quests[quest_type] or {}) do
+    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for __, quest in ipairs(quests[quest_type] or {}) do
             total = total + 1
             if quest.completed and quest.completed_date == today then
                 completed = completed + 1
@@ -1300,7 +1300,7 @@ function Dashboard:toggleQuestComplete(quest, quest_type)
         local today = Data:getCurrentDate()
         local all_quests = Data:loadAllQuests()
 
-        for _, q in ipairs(all_quests[quest_type] or {}) do
+        for __, q in ipairs(all_quests[quest_type] or {}) do
             if q.id == quest.id then
                 -- Update streak
                 if q.completed_date then

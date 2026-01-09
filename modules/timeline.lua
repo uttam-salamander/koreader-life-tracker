@@ -260,7 +260,7 @@ function Timeline:showTimelineView()
     self.quest_touch_areas = {}
 
     -- Build time slot sections
-    for _, slot in ipairs(time_slots) do
+    for __, slot in ipairs(time_slots) do
         local slot_quests = self:getQuestsForSlot(today_quests, slot)
         total_quests = total_quests + #slot_quests
 
@@ -288,7 +288,7 @@ function Timeline:showTimelineView()
             })
             self.current_y = self.current_y + 20
         else
-            for _, quest in ipairs(slot_quests) do
+            for __, quest in ipairs(slot_quests) do
                 if quest.completed then
                     completed_quests = completed_quests + 1
                 end
@@ -701,7 +701,7 @@ function Timeline:toggleQuestComplete(quest)
     local quest_type = nil
 
     for qtype, quests in pairs(all_quests) do
-        for _, q in ipairs(quests) do
+        for __, q in ipairs(quests) do
             if q.id == quest.id then
                 quest_type = qtype
                 break
@@ -748,7 +748,7 @@ function Timeline:skipQuest(quest)
     local quest_type = nil
 
     for qtype, quests in pairs(all_quests) do
-        for _, q in ipairs(quests) do
+        for __, q in ipairs(quests) do
             if q.id == quest.id then
                 q.skipped_date = today
                 quest_type = qtype
@@ -814,17 +814,17 @@ function Timeline:getQuestsForDate(date_str)
     end
 
     -- Daily quests - always show
-    for _, quest in ipairs(all_quests.daily or {}) do
+    for __, quest in ipairs(all_quests.daily or {}) do
         table.insert(quests, cloneQuestForDate(quest))
     end
 
     -- Weekly quests - show for all days
-    for _, quest in ipairs(all_quests.weekly or {}) do
+    for __, quest in ipairs(all_quests.weekly or {}) do
         table.insert(quests, cloneQuestForDate(quest))
     end
 
     -- Monthly quests
-    for _, quest in ipairs(all_quests.monthly or {}) do
+    for __, quest in ipairs(all_quests.monthly or {}) do
         table.insert(quests, cloneQuestForDate(quest))
     end
 
@@ -841,7 +841,7 @@ Filter quests by time slot.
 --]]
 function Timeline:getQuestsForSlot(quests, slot)
     local slot_quests = {}
-    for _, quest in ipairs(quests) do
+    for __, quest in ipairs(quests) do
         if quest.time_slot == slot then
             table.insert(slot_quests, quest)
         end

@@ -456,28 +456,35 @@ function Settings:showRestoreMenu(ui)
     end
 
     local items = {}
+    local menu
+    local navigating_away = false  -- Flag to prevent close_callback from showing settings
 
-    for _, backup in ipairs(backups) do
+    for __, backup in ipairs(backups) do
         -- Format size in KB
         local size_kb = string.format("%.1f KB", (backup.size or 0) / 1024)
         table.insert(items, {
             text = backup.created_at .. " (" .. size_kb .. ")",
             callback = function()
+                navigating_away = true
+                UIManager:close(menu)
                 self:confirmRestore(ui, backup)
             end,
             hold_callback = function()
+                navigating_away = true
+                UIManager:close(menu)
                 self:showBackupOptions(ui, backup)
             end,
         })
     end
 
-    local menu
     menu = Menu:new{
         title = _("Select Backup to Restore"),
         item_table = items,
         close_callback = function()
             UIManager:close(menu)
-            self:show(ui)
+            if not navigating_away then
+                self:show(ui)
+            end
         end,
     }
     UIManager:show(menu)

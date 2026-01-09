@@ -173,7 +173,7 @@ end
 
 function Data:updateQuest(quest_type, quest_id, updates)
     local quests = self:loadAllQuests()
-    for _, quest in ipairs(quests[quest_type]) do
+    for __, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id then
             for k, v in pairs(updates) do
                 quest[k] = v
@@ -221,7 +221,7 @@ Auto-completes when target is reached.
 --]]
 function Data:incrementQuestProgress(quest_type, quest_id)
     local quests = self:loadAllQuests()
-    for _, quest in ipairs(quests[quest_type]) do
+    for __, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
 
@@ -255,7 +255,7 @@ Decrement progress for a progressive quest.
 --]]
 function Data:decrementQuestProgress(quest_type, quest_id)
     local quests = self:loadAllQuests()
-    for _, quest in ipairs(quests[quest_type]) do
+    for __, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
 
@@ -289,7 +289,7 @@ Set progress for a progressive quest to a specific value.
 --]]
 function Data:setQuestProgress(quest_type, quest_id, value)
     local quests = self:loadAllQuests()
-    for _, quest in ipairs(quests[quest_type]) do
+    for __, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
             local target = quest.progress_target or 1
@@ -322,8 +322,8 @@ function Data:resetDailyProgress()
     local quests = self:loadAllQuests()
     local changed = false
 
-    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _, quest in ipairs(quests[quest_type]) do
+    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for __, quest in ipairs(quests[quest_type]) do
             if quest.is_progressive and quest.progress_last_date ~= today then
                 quest.progress_current = 0
                 quest.progress_last_date = today
@@ -485,7 +485,7 @@ end
 
 function Data:updateReminder(reminder_id, updates)
     local reminders = self:loadReminders()
-    for _, reminder in ipairs(reminders) do
+    for __, reminder in ipairs(reminders) do
         if reminder.id == reminder_id then
             for k, v in pairs(updates) do
                 reminder[k] = v
@@ -603,7 +603,7 @@ end
 
 --[[--
 Validate that a filepath is within the backup directory.
-Prevents path traversal and symlink attacks on import.
+Prevents path traversal attacks on import.
 @param filepath string The filepath to validate
 @return boolean Whether the path is safe
 --]]
@@ -617,7 +617,6 @@ function Data:isValidBackupPath(filepath)
         return false
     end
 
-    local lfs = require("libs/libkoreader-lfs")
     local backup_dir = self:getBackupDir()
 
     -- Normalize: ensure backup_dir ends without slash for consistent comparison
@@ -631,12 +630,6 @@ function Data:isValidBackupPath(filepath)
     -- Check for path traversal attempts in the remaining path
     local remaining = filepath:sub(#backup_dir + 1)
     if remaining:match("%.%.") then
-        return false
-    end
-
-    -- Check for symlinks (prevent symlink-based path traversal)
-    local attr = lfs.symlinkattributes(filepath)
-    if attr and attr.mode == "link" then
         return false
     end
 
@@ -706,7 +699,7 @@ function Data:validateBackupStructure(backup)
         if type(data.quests) ~= "table" then
             return false, "Invalid quests format"
         end
-        for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
             if data.quests[quest_type] and type(data.quests[quest_type]) ~= "table" then
                 return false, "Invalid " .. quest_type .. " quests format"
             end
@@ -798,21 +791,31 @@ function Data:exportBackupToFile(filename)
     local temp_filepath = filepath .. ".tmp"
     local backup = self:createBackup()
 
-    -- Write to temp file first (atomic write pattern)
-    -- Use pcall and check BOTH exception status AND return value
-    local pcall_ok, dump_result = pcall(function()
-        return rapidjson.dump(backup, temp_filepath, { pretty = true, sort_keys = true })
+    -- Encode backup data to JSON string
+    local pcall_ok, json_str = pcall(function()
+        return rapidjson.encode(backup, { pretty = true, sort_keys = true })
     end)
 
     if not pcall_ok then
-        pcall(os.remove, temp_filepath)
-        return false, "Failed to write backup: " .. tostring(dump_result)
+        return false, "Failed to serialize backup: " .. tostring(json_str)
     end
 
-    -- rapidjson.dump returns nil on failure even without throwing
-    if not dump_result then
-        pcall(os.remove, temp_filepath)
+    if not json_str or json_str == "" then
         return false, "Failed to serialize backup data"
+    end
+
+    -- Write to temp file first (atomic write pattern)
+    local file, err = io.open(temp_filepath, "w")
+    if not file then
+        return false, "Failed to create backup file: " .. tostring(err)
+    end
+
+    local write_ok, write_err = file:write(json_str)
+    file:close()
+
+    if not write_ok then
+        pcall(os.remove, temp_filepath)
+        return false, "Failed to write backup: " .. tostring(write_err)
     end
 
     -- Verify temp file was created and has content

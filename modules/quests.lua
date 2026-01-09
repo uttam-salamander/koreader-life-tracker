@@ -876,7 +876,7 @@ function Quests:toggleQuestComplete(quest)
         local today = Data:getCurrentDate()
         local quests = Data:loadAllQuests()
 
-        for _, q in ipairs(quests[self.current_type]) do
+        for __, q in ipairs(quests[self.current_type]) do
             if q.id == quest.id then
                 -- Update streak
                 if q.completed_date then
@@ -918,7 +918,7 @@ function Quests:skipQuest(quest)
     local today = Data:getCurrentDate()
     local quests = Data:loadAllQuests()
 
-    for _, q in ipairs(quests[self.current_type]) do
+    for __, q in ipairs(quests[self.current_type]) do
         if q.id == quest.id then
             q.skipped_date = today
             break
@@ -1074,8 +1074,8 @@ function Quests:updateDailyLog()
     local total = 0
     local completed = 0
 
-    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _, quest in ipairs(quests[quest_type] or {}) do
+    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for __, quest in ipairs(quests[quest_type] or {}) do
             total = total + 1
             if quest.completed and quest.completed_date == today then
                 completed = completed + 1
@@ -1185,7 +1185,7 @@ function Quests:showTimeSlotSelector(is_edit)
     local user_settings = Data:loadUserSettings()
     local buttons = {}
 
-    for _, slot in ipairs(user_settings.time_slots) do
+    for __, slot in ipairs(user_settings.time_slots) do
         table.insert(buttons, {{
             text = slot,
             callback = function()
@@ -1216,7 +1216,7 @@ Show energy level selector (multi-select).
 function Quests:showEnergySelector(is_edit)
     self.selected_energies = {}
     -- Copy existing selections
-    for _, e in ipairs(self.new_quest.energy_required or {}) do
+    for __, e in ipairs(self.new_quest.energy_required or {}) do
         self.selected_energies[e] = true
     end
     self:showEnergySelectorWithSelection(is_edit)
@@ -1238,7 +1238,7 @@ function Quests:showEnergySelectorWithSelection(is_edit)
     }})
 
     -- Energy categories (multi-select)
-    for _, energy in ipairs(user_settings.energy_categories) do
+    for __, energy in ipairs(user_settings.energy_categories) do
         local selected = self.selected_energies[energy] and "[X] " or "[ ] "
         table.insert(buttons, {{
             text = selected .. energy,
@@ -1301,7 +1301,7 @@ function Quests:showCategorySelector(is_edit)
     }})
 
     -- Category options
-    for _, cat in ipairs(user_settings.quest_categories or {}) do
+    for __, cat in ipairs(user_settings.quest_categories or {}) do
         local selected = self.new_quest.category == cat
         table.insert(buttons, {{
             text = (selected and "[X] " or "[ ] ") .. cat,
@@ -1518,8 +1518,8 @@ function Quests:getFilteredQuestsForToday(energy_level)
     local filtered = {}
 
     if not energy_level then
-        for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-            for _, quest in ipairs(quests[quest_type] or {}) do
+        for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+            for __, quest in ipairs(quests[quest_type] or {}) do
                 if not quest.completed then
                     table.insert(filtered, quest)
                 end
@@ -1531,8 +1531,8 @@ function Quests:getFilteredQuestsForToday(energy_level)
     local highest_energy = user_settings.energy_categories and user_settings.energy_categories[1] or "Energetic"
     local is_high_energy = (energy_level == highest_energy)
 
-    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _, quest in ipairs(quests[quest_type] or {}) do
+    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for __, quest in ipairs(quests[quest_type] or {}) do
             if not quest.completed then
                 local energy_req = quest.energy_required
                 local matches = false
@@ -1540,7 +1540,7 @@ function Quests:getFilteredQuestsForToday(energy_level)
                 if energy_req == "Any" or energy_req == nil then
                     matches = true
                 elseif type(energy_req) == "table" then
-                    for _, e in ipairs(energy_req) do
+                    for __, e in ipairs(energy_req) do
                         if e == energy_level or is_high_energy then
                             matches = true
                             break

@@ -140,7 +140,7 @@ function Journal:showJournalView()
     -- Monospace font at size 11 is approximately 7 pixels per character
     local char_width = math.floor(content_width / 7)
     local graph_widgets = self:renderMoodLineGraph(mood_data, energy_categories, char_width)
-    for _, widget in ipairs(graph_widgets) do
+    for __, widget in ipairs(graph_widgets) do
         table.insert(content, widget)
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
@@ -250,7 +250,7 @@ function Journal:showJournalView()
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     local spider_widgets = self:buildCategorySpiderChart(content_width)
-    for _, widget in ipairs(spider_widgets) do
+    for __, widget in ipairs(spider_widgets) do
         table.insert(content, widget)
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
@@ -574,13 +574,13 @@ function Journal:getWeeklyMood()
 
         -- Initialize slots for this day
         local slot_scores = {}
-        for _, slot in ipairs(time_slots) do
+        for __, slot in ipairs(time_slots) do
             slot_scores[slot] = nil  -- No data yet
         end
 
         -- Get mood entries and map to time slots
         local entries = day_data and day_data.energy_entries or {}
-        for _, entry in ipairs(entries) do
+        for __, entry in ipairs(entries) do
             local slot = entry.time_slot or Data:hourToTimeSlot(entry.hour, time_slots)
             local entry_score = energy_scores[entry.energy] or 0
             -- Keep the latest entry for each slot
@@ -591,7 +591,7 @@ function Journal:getWeeklyMood()
         if #entries == 0 and day_data and day_data.energy_level then
             local score = energy_scores[day_data.energy_level] or 0
             -- Apply to all slots as fallback
-            for _, slot in ipairs(time_slots) do
+            for __, slot in ipairs(time_slots) do
                 slot_scores[slot] = score
             end
         end
@@ -631,8 +631,8 @@ function Journal:renderMoodLineGraph(mood_data, energy_categories, _max_width)
         local label = string.sub(energy_categories[row], 1, 1)
         local line = label .. " | "  -- 4 chars: "E | "
 
-        for _, day in ipairs(mood_data) do
-            for _, slot in ipairs(time_slots) do
+        for __, day in ipairs(mood_data) do
+            for __, slot in ipairs(time_slots) do
                 local slot_score = day.slot_scores[slot]
                 local marker = "."
                 if slot_score then
@@ -662,7 +662,7 @@ function Journal:renderMoodLineGraph(mood_data, energy_categories, _max_width)
 
     -- Day labels: same prefix width, then centered labels
     local day_labels = "    "  -- 4 spaces to match "X | "
-    for _, day in ipairs(mood_data) do
+    for __, day in ipairs(mood_data) do
         local abbr = day.abbr
         local total_pad = day_width - #abbr
         local left = math.floor(total_pad / 2)
@@ -989,14 +989,14 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     -- Calculate completion rate per category
     local category_stats = {}
-    for _, cat in ipairs(categories) do
+    for __, cat in ipairs(categories) do
         category_stats[cat] = { completed = 0, total = 0 }
     end
     category_stats["None"] = { completed = 0, total = 0 }
 
     -- Count quests per category
-    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _, quest in ipairs(quests[quest_type] or {}) do
+    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for __, quest in ipairs(quests[quest_type] or {}) do
             local cat = quest.category or "None"
             if not category_stats[cat] then
                 category_stats[cat] = { completed = 0, total = 0 }
@@ -1010,7 +1010,7 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     -- Build data for spider chart (only categories with quests)
     local active_categories = {}
-    for _, cat in ipairs(categories) do
+    for __, cat in ipairs(categories) do
         if category_stats[cat] and category_stats[cat].total > 0 then
             local rate = category_stats[cat].completed / category_stats[cat].total
             table.insert(active_categories, { name = cat, rate = rate })
@@ -1135,7 +1135,7 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     else
         -- Fallback: simple horizontal bar chart for any number of categories
-        for _, cat_data in ipairs(active_categories) do
+        for __, cat_data in ipairs(active_categories) do
             local bar_width = 20
             local filled = math.floor(cat_data.rate * bar_width)
             local bar = string.rep("█", filled) .. string.rep("░", bar_width - filled)
