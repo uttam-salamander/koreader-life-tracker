@@ -1059,12 +1059,24 @@ function Reminders:showEditReminder(reminder)
                 text = _("Save"),
                 callback = function()
                     local new_title = dialog:getInputText()
-                    UIManager:close(dialog)
-                    if new_title and new_title ~= "" then
-                        Data:updateReminder(reminder.id, {title = new_title})
-                        UIManager:close(self.reminders_widget)
-                        self:showRemindersView()
+                    if not new_title or new_title == "" then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a title"),
+                            timeout = 2,
+                        })
+                        return
                     end
+                    if #new_title > MAX_REMINDER_TITLE_LENGTH then
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("Title too long (%d chars). Max is %d."), #new_title, MAX_REMINDER_TITLE_LENGTH),
+                            timeout = 3,
+                        })
+                        return
+                    end
+                    UIManager:close(dialog)
+                    Data:updateReminder(reminder.id, {title = new_title})
+                    UIManager:close(self.reminders_widget)
+                    self:showRemindersView()
                 end,
             },
         }},

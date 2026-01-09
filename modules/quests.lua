@@ -975,13 +975,13 @@ end
 Show input dialog for manually setting progress.
 --]]
 function Quests:showProgressInput(quest)
+    local target = quest.progress_target or 1
     local dialog
     dialog = InputDialog:new{
         title = string.format(_("Set Progress for '%s'"), quest.title),
         input = tostring(quest.progress_current or 0),
-        input_hint = string.format(_("Current: %d/%d %s"),
-            quest.progress_current or 0,
-            quest.progress_target or 1,
+        input_hint = string.format(_("Enter 0-%d %s"),
+            target,
             quest.progress_unit or ""),
         input_type = "number",
         buttons = {{
@@ -996,29 +996,36 @@ function Quests:showProgressInput(quest)
                 is_enter_default = true,
                 callback = function()
                     local value = tonumber(dialog:getInputText())
-                    if value and value >= 0 then
-                        local updated = Data:setQuestProgress(self.current_type, quest.id, value)
-                        if updated then
-                            if updated.completed then
-                                self:updateDailyLog()
-                                self:updateGlobalStreak()
-                                UIManager:show(InfoMessage:new{
-                                    text = _("Quest completed!"),
-                                    timeout = 1,
-                                })
-                            end
-                        end
-                        UIManager:close(dialog)
-                        -- Refresh
-                        UIManager:close(self.quests_widget)
-                        self:showQuestsView()
-                        UIManager:setDirty("all", "ui")
-                    else
+                    if not value or value < 0 then
                         UIManager:show(InfoMessage:new{
                             text = _("Please enter a valid number"),
                             timeout = 2,
                         })
+                        return
                     end
+                    if value > target then
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("Value cannot exceed target (%d)"), target),
+                            timeout = 2,
+                        })
+                        return
+                    end
+                    local updated = Data:setQuestProgress(self.current_type, quest.id, value)
+                    if updated then
+                        if updated.completed then
+                            self:updateDailyLog()
+                            self:updateGlobalStreak()
+                            UIManager:show(InfoMessage:new{
+                                text = _("Quest completed!"),
+                                timeout = 1,
+                            })
+                        end
+                    end
+                    UIManager:close(dialog)
+                    -- Refresh
+                    UIManager:close(self.quests_widget)
+                    self:showQuestsView()
+                    UIManager:setDirty("all", "ui")
                 end,
             },
         }},

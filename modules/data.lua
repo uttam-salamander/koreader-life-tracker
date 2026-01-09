@@ -562,31 +562,48 @@ end
 
 --[[--
 Sanitize a filename to prevent path traversal attacks.
-Removes directory separators and dangerous characters.
+Removes directory separators, null bytes, and dangerous characters.
 @param filename string The filename to sanitize
-@return string Sanitized filename
+@return string|nil Sanitized filename or nil if invalid
 --]]
 function Data:sanitizeFilename(filename)
     if not filename or filename == "" then
         return nil
     end
+
+    -- Reject null bytes (could bypass C string handling)
+    if filename:find("\0") then
+        return nil
+    end
+
+    -- Reject absolute paths
+    if filename:sub(1, 1) == "/" or filename:match("^%a:") then
+        return nil
+    end
+
     -- Remove path separators and parent directory references
     local sanitized = filename:gsub("[/\\]", "_")
     sanitized = sanitized:gsub("%.%.", "_")
+
+    -- Remove other dangerous filesystem characters
+    sanitized = sanitized:gsub('[%*%?%"%<%>%|%:]', "_")
+
     -- Ensure it ends with .json
     if not sanitized:match("%.json$") then
         sanitized = sanitized .. ".json"
     end
+
     -- Ensure filename is not empty after sanitization
     if sanitized == ".json" or sanitized == "" then
         return nil
     end
+
     return sanitized
 end
 
 --[[--
 Validate that a filepath is within the backup directory.
-Prevents path traversal attacks on import.
+Prevents path traversal and symlink attacks on import.
 @param filepath string The filepath to validate
 @return boolean Whether the path is safe
 --]]
@@ -594,18 +611,35 @@ function Data:isValidBackupPath(filepath)
     if not filepath then
         return false
     end
-    local backup_dir = self:getBackupDir()
-    -- Normalize: ensure backup_dir ends without slash for consistent comparison
-    backup_dir = backup_dir:gsub("/$", "")
-    -- Check that filepath starts with backup_dir
-    if not filepath:sub(1, #backup_dir) == backup_dir then
+
+    -- Reject null bytes
+    if filepath:find("\0") then
         return false
     end
+
+    local lfs = require("libs/libkoreader-lfs")
+    local backup_dir = self:getBackupDir()
+
+    -- Normalize: ensure backup_dir ends without slash for consistent comparison
+    backup_dir = backup_dir:gsub("/$", "")
+
+    -- Check that filepath starts with backup_dir (FIXED: proper comparison)
+    if filepath:sub(1, #backup_dir) ~= backup_dir then
+        return false
+    end
+
     -- Check for path traversal attempts in the remaining path
     local remaining = filepath:sub(#backup_dir + 1)
     if remaining:match("%.%.") then
         return false
     end
+
+    -- Check for symlinks (prevent symlink-based path traversal)
+    local attr = lfs.symlinkattributes(filepath)
+    if attr and attr.mode == "link" then
+        return false
+    end
+
     return true
 end
 
@@ -746,7 +780,7 @@ function Data:exportBackupToFile(filename)
     local lfs = require("libs/libkoreader-lfs")
 
     if not self:ensureBackupDir() then
-        return false, "Failed to create backup directory"
+        return false, "Failed to create backup directory. Check storage permissions and free space."
     end
 
     -- Generate filename if not provided
@@ -765,22 +799,31 @@ function Data:exportBackupToFile(filename)
     local backup = self:createBackup()
 
     -- Write to temp file first (atomic write pattern)
-    local ok, err = pcall(function()
+    -- Use pcall and check BOTH exception status AND return value
+    local pcall_ok, dump_result = pcall(function()
         return rapidjson.dump(backup, temp_filepath, { pretty = true, sort_keys = true })
     end)
 
-    if not ok then
+    if not pcall_ok then
         pcall(os.remove, temp_filepath)
-        return false, "Failed to write backup: " .. tostring(err)
+        return false, "Failed to write backup: " .. tostring(dump_result)
     end
 
-    -- Verify temp file was created
-    if lfs.attributes(temp_filepath, "mode") ~= "file" then
+    -- rapidjson.dump returns nil on failure even without throwing
+    if not dump_result then
+        pcall(os.remove, temp_filepath)
+        return false, "Failed to serialize backup data"
+    end
+
+    -- Verify temp file was created and has content
+    local temp_attr = lfs.attributes(temp_filepath)
+    if not temp_attr or temp_attr.mode ~= "file" or temp_attr.size == 0 then
+        pcall(os.remove, temp_filepath)
         return false, "Failed to create backup file"
     end
 
-    -- Remove old file if exists, then rename temp to final
-    pcall(os.remove, filepath)
+    -- Atomic rename (replaces target if exists on POSIX systems)
+    -- This avoids TOCTOU by not deleting first
     local rename_ok, rename_err = os.rename(temp_filepath, filepath)
 
     if not rename_ok then
@@ -790,6 +833,9 @@ function Data:exportBackupToFile(filename)
 
     return true, filepath
 end
+
+-- Maximum backup file size (10MB)
+local MAX_BACKUP_SIZE = 10 * 1024 * 1024
 
 --[[--
 Import backup from a JSON file.
@@ -805,9 +851,16 @@ function Data:importBackupFromFile(filepath)
         return false, "Invalid backup file path"
     end
 
-    -- Check if file exists
-    if lfs.attributes(filepath, "mode") ~= "file" then
+    -- Check if file exists and get attributes
+    local attr = lfs.attributes(filepath)
+    if not attr or attr.mode ~= "file" then
         return false, "Backup file not found"
+    end
+
+    -- Check file size to prevent memory exhaustion
+    if attr.size > MAX_BACKUP_SIZE then
+        return false, string.format("Backup file too large (%.1f MB). Max is %.0f MB.",
+            attr.size / 1024 / 1024, MAX_BACKUP_SIZE / 1024 / 1024)
     end
 
     -- Load and parse the backup file with error handling
@@ -840,9 +893,15 @@ function Data:listBackups()
         -- Only list lifetracker backup files (not arbitrary json files)
         if filename:match("^lifetracker_.*%.json$") then
             local filepath = backup_dir .. "/" .. filename
+
+            -- Skip symlinks and validate path (security check)
+            if not self:isValidBackupPath(filepath) then
+                goto continue
+            end
+
             local attr = lfs.attributes(filepath)
 
-            if attr then
+            if attr and attr.mode == "file" then
                 -- Try to read backup metadata with pcall to handle corrupted files
                 local created_at = nil
                 local ok, backup_data = pcall(rapidjson.load, filepath)
@@ -857,6 +916,8 @@ function Data:listBackups()
                     size = attr.size,
                 })
             end
+
+            ::continue::
         end
     end
 
@@ -928,12 +989,22 @@ function Data:cleanupAutoBackups(max_keep)
     for filename in lfs.dir(backup_dir) do
         if filename:match("^lifetracker_auto_%d+%.json$") then
             local filepath = backup_dir .. "/" .. filename
+
+            -- Validate path before adding to cleanup list (security check)
+            if not self:isValidBackupPath(filepath) then
+                goto continue
+            end
+
             local attr = lfs.attributes(filepath)
-            table.insert(auto_backups, {
-                filename = filename,
-                filepath = filepath,
-                mtime = attr.modification,
-            })
+            if attr and attr.mode == "file" then
+                table.insert(auto_backups, {
+                    filename = filename,
+                    filepath = filepath,
+                    mtime = attr.modification,
+                })
+            end
+
+            ::continue::
         end
     end
 
@@ -942,10 +1013,12 @@ function Data:cleanupAutoBackups(max_keep)
         return a.mtime < b.mtime
     end)
 
-    -- Remove oldest backups beyond limit
+    -- Remove oldest backups beyond limit (re-validate each path)
     while #auto_backups > max_keep do
         local oldest = table.remove(auto_backups, 1)
-        os.remove(oldest.filepath)
+        if self:isValidBackupPath(oldest.filepath) then
+            os.remove(oldest.filepath)
+        end
     end
 end
 
