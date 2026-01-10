@@ -214,38 +214,46 @@ function Dashboard:showDashboardView()
     -- Main content group - title can be in top zone (visual only, no gestures there)
     local content = VerticalGroup:new{ align = "left" }
 
+    -- Track visual Y position starting from frame padding
+    local visual_y = Size.padding.large
+
     -- ===== Greeting (in top zone - non-interactive) =====
     local greeting = self:getTimeBasedGreeting()
-    table.insert(content, TextWidget:new{
+    local greeting_widget = TextWidget:new{
         text = greeting,
         face = Font:getFace("tfont", 22),
         bold = true,
-    })
+    }
+    table.insert(content, greeting_widget)
+    visual_y = visual_y + greeting_widget:getSize().h
 
     -- ===== Random Quote (below greeting) =====
     local quote = Data:getRandomQuote()
     if quote then
         table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+        visual_y = visual_y + Size.padding.small
         local colors = UIConfig:getColors()
-        table.insert(content, TextWidget:new{
+        local quote_widget = TextWidget:new{
             text = "\"" .. quote .. "\"",
             face = UIConfig:getFont("cfont", 14),
             fgcolor = colors.muted,
             max_width = content_width,
-        })
+        }
+        table.insert(content, quote_widget)
+        visual_y = visual_y + quote_widget:getSize().h
     end
 
     -- Add spacer to push interactive content below top_safe_zone
-    -- Greeting + quote is ~50px, so we need (top_safe_zone - 50 - padding) more
-    local greeting_height = quote and 50 or 30
-    local spacer_needed = top_safe_zone - Size.padding.large - greeting_height
+    local spacer_needed = top_safe_zone - visual_y
     if spacer_needed > 0 then
         table.insert(content, VerticalSpan:new{ width = spacer_needed })
+        visual_y = visual_y + spacer_needed
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+    visual_y = visual_y + Size.padding.default
 
     -- All interactive content starts here (below top_safe_zone)
-    self.current_y = top_safe_zone + Size.padding.default
+    self.current_y = visual_y
 
     -- ===== Energy Level Tabs (visual only, taps handled separately) =====
     self.energy_tabs_y = self.current_y
