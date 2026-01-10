@@ -183,6 +183,13 @@ local DEFAULT_SETTINGS = {
     today_energy = nil,
     today_date = nil,
     lock_screen_dashboard = false,
+    quotes = {
+        "The journey of a thousand miles begins with a single step.",
+        "Reading is dreaming with open eyes.",
+        "Small progress is still progress.",
+        "One page at a time.",
+        "Today is a good day to learn something new.",
+    },
 }
 
 function Data:loadUserSettings()
@@ -211,6 +218,11 @@ function Data:loadUserSettings()
             streak = DEFAULT_SETTINGS.streak_data
         end
 
+        local quotes = s:readSetting("quotes")
+        if type(quotes) ~= "table" or #quotes == 0 then
+            quotes = DEFAULT_SETTINGS.quotes
+        end
+
         return {
             energy_categories = energy,
             time_slots = slots,
@@ -219,6 +231,7 @@ function Data:loadUserSettings()
             today_energy = s:readSetting("today_energy"),
             today_date = s:readSetting("today_date"),
             lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
+            quotes = quotes,
         }
     end)
 
@@ -238,7 +251,22 @@ function Data:saveUserSettings(user_settings)
     s:saveSetting("today_energy", user_settings.today_energy)
     s:saveSetting("today_date", user_settings.today_date)
     s:saveSetting("lock_screen_dashboard", user_settings.lock_screen_dashboard)
+    s:saveSetting("quotes", user_settings.quotes)
     s:flush()
+end
+
+--[[--
+Get a random quote from the user's quotes list.
+@treturn string A random quote, or nil if no quotes exist
+--]]
+function Data:getRandomQuote()
+    local settings = self:loadUserSettings()
+    local quotes = settings.quotes
+    if not quotes or #quotes == 0 then
+        return nil
+    end
+    local idx = math.random(1, #quotes)
+    return quotes[idx]
 end
 
 -- ============================================

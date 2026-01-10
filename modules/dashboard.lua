@@ -222,9 +222,22 @@ function Dashboard:showDashboardView()
         bold = true,
     })
 
+    -- ===== Random Quote (below greeting) =====
+    local quote = Data:getRandomQuote()
+    if quote then
+        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+        local colors = UIConfig:getColors()
+        table.insert(content, TextWidget:new{
+            text = "\"" .. quote .. "\"",
+            face = UIConfig:getFont("cfont", 14),
+            fgcolor = colors.muted,
+            max_width = content_width,
+        })
+    end
+
     -- Add spacer to push interactive content below top_safe_zone
-    -- Greeting is ~30px, so we need (top_safe_zone - 30 - padding) more
-    local greeting_height = 30
+    -- Greeting + quote is ~50px, so we need (top_safe_zone - 50 - padding) more
+    local greeting_height = quote and 50 or 30
     local spacer_needed = top_safe_zone - Size.padding.large - greeting_height
     if spacer_needed > 0 then
         table.insert(content, VerticalSpan:new{ width = spacer_needed })

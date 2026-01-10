@@ -98,6 +98,14 @@ function Settings:show(ui)
                 help_text = _("Use stronger contrast for better visibility"),
             },
             {
+                text = _("Daily Quotes"),
+                callback = function()
+                    UIManager:close(menu)
+                    self:showQuotesMenu(ui, user_settings)
+                end,
+                help_text = _("Manage inspirational quotes shown on dashboard"),
+            },
+            {
                 text = _("Backup Data"),
                 callback = function()
                     UIManager:close(menu)
@@ -441,6 +449,188 @@ function Settings:addTimeSlot(ui, user_settings)
                     end
                     UIManager:close(dialog)
                     self:showTimeSlotsMenu(ui, user_settings)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+-- ============================================
+-- Daily Quotes Functions
+-- ============================================
+
+-- Maximum quote length
+local MAX_QUOTE_LENGTH = 200
+
+--[[--
+Show quotes management menu.
+--]]
+function Settings:showQuotesMenu(ui, user_settings)
+    local items = {}
+
+    -- Current quotes
+    local quotes = user_settings.quotes or {}
+    for i, quote in ipairs(quotes) do
+        -- Truncate long quotes for menu display
+        local display_text = quote
+        if #quote > 50 then
+            display_text = quote:sub(1, 47) .. "..."
+        end
+        table.insert(items, {
+            text = display_text,
+            callback = function()
+                self:showQuoteOptions(ui, user_settings, i)
+            end,
+        })
+    end
+
+    -- Add new quote option
+    table.insert(items, {
+        text = _("[+] Add New Quote"),
+        callback = function()
+            self:addNewQuote(ui, user_settings)
+        end,
+    })
+
+    local menu
+    menu = Menu:new{
+        title = _("Daily Quotes"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+            self:show(ui)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+--[[--
+Show options for a specific quote (edit/delete).
+--]]
+function Settings:showQuoteOptions(ui, user_settings, index)
+    local quote = user_settings.quotes[index]
+    local dialog
+    dialog = ButtonDialog:new{
+        title = quote,
+        buttons = {
+            {{
+                text = _("Edit"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:editQuote(ui, user_settings, index)
+                end,
+            }},
+            {{
+                text = _("Delete"),
+                callback = function()
+                    UIManager:close(dialog)
+                    table.remove(user_settings.quotes, index)
+                    Data:saveUserSettings(user_settings)
+                    UIManager:show(InfoMessage:new{
+                        text = _("Quote deleted"),
+                        timeout = 2,
+                    })
+                    self:showQuotesMenu(ui, user_settings)
+                end,
+            }},
+            {{
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
+Add a new quote.
+--]]
+function Settings:addNewQuote(ui, user_settings)
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Add Quote"),
+        input = "",
+        input_hint = _("Enter your quote (max 200 chars)"),
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showQuotesMenu(ui, user_settings)
+                end,
+            },
+            {
+                text = _("Add"),
+                is_enter_default = true,
+                callback = function()
+                    local quote = Data:sanitizeTextInput(dialog:getInputText(), MAX_QUOTE_LENGTH)
+                    if not quote or quote == "" then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a quote"),
+                            timeout = 2,
+                        })
+                        return
+                    end
+                    if not user_settings.quotes then
+                        user_settings.quotes = {}
+                    end
+                    table.insert(user_settings.quotes, quote)
+                    Data:saveUserSettings(user_settings)
+                    UIManager:close(dialog)
+                    UIManager:show(InfoMessage:new{
+                        text = _("Quote added!"),
+                        timeout = 2,
+                    })
+                    self:showQuotesMenu(ui, user_settings)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
+Edit an existing quote.
+--]]
+function Settings:editQuote(ui, user_settings, index)
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Edit Quote"),
+        input = user_settings.quotes[index],
+        input_hint = _("Enter your quote (max 200 chars)"),
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showQuotesMenu(ui, user_settings)
+                end,
+            },
+            {
+                text = _("Save"),
+                is_enter_default = true,
+                callback = function()
+                    local quote = Data:sanitizeTextInput(dialog:getInputText(), MAX_QUOTE_LENGTH)
+                    if not quote or quote == "" then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a quote"),
+                            timeout = 2,
+                        })
+                        return
+                    end
+                    user_settings.quotes[index] = quote
+                    Data:saveUserSettings(user_settings)
+                    UIManager:close(dialog)
+                    UIManager:show(InfoMessage:new{
+                        text = _("Quote updated!"),
+                        timeout = 2,
+                    })
+                    self:showQuotesMenu(ui, user_settings)
                 end,
             },
         }},
