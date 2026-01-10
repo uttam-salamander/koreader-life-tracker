@@ -101,10 +101,11 @@ function Reminders:showRemindersView()
     -- Main content
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Header (in top zone - non-interactive)
+    -- Header (in top zone - non-interactive, standardized page title)
     table.insert(content, TextWidget:new{
         text = _("Reminders"),
-        face = Font:getFace("tfont", 22),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
         bold = true,
     })
 

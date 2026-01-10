@@ -164,6 +164,33 @@ function UIConfig:getDimensions()
         border_thin = Size.border.thin,
         border_default = Size.border.default,
         border_thick = Size.border.thick,
+
+        -- ============================================================
+        -- Typography Scale (standardized font sizes across all screens)
+        -- ============================================================
+        font_page_title = 20,       -- Main page headers (Dashboard, Quests, etc.)
+        font_section_header = 16,   -- Section titles (Today's Reminders, etc.)
+        font_body = 14,             -- Primary content text
+        font_body_small = 13,       -- Secondary content, quest titles
+        font_caption = 11,          -- Captions, labels, small text
+        font_button = 11,           -- Button text (standardized)
+        font_stat_value = 20,       -- Large stat numbers
+        font_stat_label = 10,       -- Stat labels below values
+
+        -- ============================================================
+        -- Spacing Scale (consistent negative space across all screens)
+        -- ============================================================
+        spacing_xs = Screen:scaleBySize(4),   -- Between related items (tight)
+        spacing_sm = Screen:scaleBySize(8),   -- Between elements in a group
+        spacing_md = Screen:scaleBySize(12),  -- Between groups, after tabs
+        spacing_lg = Screen:scaleBySize(16),  -- Between sections
+        spacing_xl = Screen:scaleBySize(24),  -- Major section breaks
+
+        -- ============================================================
+        -- Stat Card Dimensions (for Read page and Dashboard)
+        -- ============================================================
+        stat_card_height = Screen:scaleBySize(60),
+        stat_card_spacing = Screen:scaleBySize(10),
     }
 
     return self._dimensions
@@ -186,6 +213,27 @@ Use this for custom values not in getDimensions().
 --]]
 function UIConfig:scale(pixels)
     return Screen:scaleBySize(pixels)
+end
+
+--[[--
+Get a standardized font size by semantic name.
+@tparam string name Font size name: "page_title", "section_header", "body",
+                    "body_small", "caption", "button", "stat_value", "stat_label"
+@treturn number Font size value (unscaled, use with UIConfig:getFont())
+--]]
+function UIConfig:fontSize(name)
+    local key = "font_" .. name
+    return self:getDimensions()[key] or 14
+end
+
+--[[--
+Get a standardized spacing value by semantic name.
+@tparam string name Spacing name: "xs", "sm", "md", "lg", "xl"
+@treturn number Scaled spacing value in pixels
+--]]
+function UIConfig:spacing(name)
+    local key = "spacing_" .. name
+    return self:getDimensions()[key] or Size.padding.default
 end
 
 --[[--

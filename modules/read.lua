@@ -368,65 +368,64 @@ function Read:createBookStatsRow(content_width)
     local total_pages = total_stats.total_pages or 0
     local total_time = ReadingStats:formatTime(total_stats.total_time or 0)
 
-    local third_width = math.floor((content_width - 20) / 3)
+    -- Use UIConfig for consistent spacing and sizing
+    local card_spacing = UIConfig:dim("stat_card_spacing")
+    local card_height = UIConfig:dim("stat_card_height")
+    local value_font = UIConfig:fontSize("stat_value")
+    local label_font = UIConfig:fontSize("stat_label")
 
-    local books_stat = VerticalGroup:new{align = "center"}
-    table.insert(books_stat, TextWidget:new{
-        text = tostring(total_books),
-        face = Font:getFace("tfont", 18),
-        fgcolor = Blitbuffer.COLOR_BLACK,
-    })
-    table.insert(books_stat, TextWidget:new{
-        text = "Books",
-        face = Font:getFace("tfont", 10),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
+    -- Get colors (night mode aware)
+    local fg_color = UIConfig:color("foreground")
+    local muted_color = UIConfig:color("muted")
+    local bg_color = UIConfig:color("background")
 
-    local pages_stat = VerticalGroup:new{align = "center"}
-    table.insert(pages_stat, TextWidget:new{
-        text = tostring(total_pages),
-        face = Font:getFace("tfont", 18),
-        fgcolor = Blitbuffer.COLOR_BLACK,
-    })
-    table.insert(pages_stat, TextWidget:new{
-        text = "Pages",
-        face = Font:getFace("tfont", 10),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
+    -- Calculate card widths: account for spacing between 3 cards
+    local total_spacing = card_spacing * 2  -- Two gaps between three cards
+    local third_width = math.floor((content_width - total_spacing) / 3)
 
-    local time_stat = VerticalGroup:new{align = "center"}
-    table.insert(time_stat, TextWidget:new{
-        text = total_time,
-        face = Font:getFace("tfont", 18),
-        fgcolor = Blitbuffer.COLOR_BLACK,
-    })
-    table.insert(time_stat, TextWidget:new{
-        text = "Total Time",
-        face = Font:getFace("tfont", 10),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
+    -- Helper to create a stat card
+    local function createStatCard(value, label)
+        local stat_group = VerticalGroup:new{align = "center"}
+        table.insert(stat_group, TextWidget:new{
+            text = tostring(value),
+            face = UIConfig:getFont("tfont", value_font),
+            fgcolor = fg_color,
+        })
+        table.insert(stat_group, VerticalSpan:new{width = UIConfig:spacing("xs")})
+        table.insert(stat_group, TextWidget:new{
+            text = label,
+            face = UIConfig:getFont("cfont", label_font),
+            fgcolor = muted_color,
+        })
+        return stat_group
+    end
 
-    local stats_row = HorizontalGroup:new{align = "top"}
+    local books_stat = createStatCard(total_books, "Books")
+    local pages_stat = createStatCard(total_pages, "Pages")
+    local time_stat = createStatCard(total_time, "Total Time")
+
+    -- Build stats row with proper spacing
+    local stats_row = HorizontalGroup:new{align = "center"}
     table.insert(stats_row, CenterContainer:new{
-        dimen = Geom:new{w = third_width, h = 50},
+        dimen = Geom:new{w = third_width, h = card_height},
         books_stat,
     })
-    table.insert(stats_row, HorizontalSpan:new{width = 10})
+    table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
     table.insert(stats_row, CenterContainer:new{
-        dimen = Geom:new{w = third_width, h = 50},
+        dimen = Geom:new{w = third_width, h = card_height},
         pages_stat,
     })
-    table.insert(stats_row, HorizontalSpan:new{width = 10})
+    table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
     table.insert(stats_row, CenterContainer:new{
-        dimen = Geom:new{w = third_width, h = 50},
+        dimen = Geom:new{w = third_width, h = card_height},
         time_stat,
     })
 
     return FrameContainer:new{
         width = content_width,
-        padding = Size.padding.small,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
+        padding = UIConfig:spacing("sm"),
+        bordersize = UIConfig:dim("border_thin"),
+        background = bg_color,
         stats_row,
     }
 end
@@ -451,56 +450,57 @@ function Read:createStatsOverview(content_width)
     local week_time_sec = week_db.time > 0 and week_db.time or (weekly.total_time or 0)
     local week_time = ReadingStats:formatTime(week_time_sec)
 
-    local half_width = math.floor((content_width - 10) / 2)
+    -- Use UIConfig for consistent spacing and colors
+    local card_spacing = UIConfig:dim("stat_card_spacing")
+    local caption_font = UIConfig:fontSize("caption")
+    local body_font = UIConfig:fontSize("body")
 
-    local left_stats = VerticalGroup:new{align = "left"}
-    table.insert(left_stats, TextWidget:new{
-        text = "Today",
-        face = Font:getFace("tfont", 11),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
-    table.insert(left_stats, TextWidget:new{
-        text = string.format("%d pages", today_pages),
-        face = Font:getFace("tfont", 14),
-        fgcolor = Blitbuffer.COLOR_BLACK,
-    })
-    table.insert(left_stats, TextWidget:new{
-        text = today_time,
-        face = Font:getFace("tfont", 11),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
+    -- Get colors (night mode aware)
+    local fg_color = UIConfig:color("foreground")
+    local muted_color = UIConfig:color("muted")
+    local bg_color = UIConfig:color("background")
 
-    local right_stats = VerticalGroup:new{align = "left"}
-    table.insert(right_stats, TextWidget:new{
-        text = "This Week",
-        face = Font:getFace("tfont", 11),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
-    table.insert(right_stats, TextWidget:new{
-        text = string.format("%d pages", week_pages),
-        face = Font:getFace("tfont", 14),
-        fgcolor = Blitbuffer.COLOR_BLACK,
-    })
-    table.insert(right_stats, TextWidget:new{
-        text = week_time,
-        face = Font:getFace("tfont", 11),
-        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-    })
+    local half_width = math.floor((content_width - card_spacing) / 2)
+
+    -- Helper to create period stats
+    local function createPeriodStats(title, pages, time)
+        local stats_group = VerticalGroup:new{align = "left"}
+        table.insert(stats_group, TextWidget:new{
+            text = title,
+            face = UIConfig:getFont("tfont", caption_font),
+            fgcolor = muted_color,
+        })
+        table.insert(stats_group, VerticalSpan:new{width = UIConfig:spacing("xs")})
+        table.insert(stats_group, TextWidget:new{
+            text = string.format("%d page%s", pages, pages == 1 and "" or "s"),
+            face = UIConfig:getFont("tfont", body_font),
+            fgcolor = fg_color,
+        })
+        table.insert(stats_group, TextWidget:new{
+            text = time,
+            face = UIConfig:getFont("cfont", caption_font),
+            fgcolor = muted_color,
+        })
+        return stats_group
+    end
+
+    local left_stats = createPeriodStats("Today", today_pages, today_time)
+    local right_stats = createPeriodStats("This Week", week_pages, week_time)
 
     local stats_row = HorizontalGroup:new{align = "top"}
     table.insert(stats_row, FrameContainer:new{
         width = half_width,
-        padding = Size.padding.small,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
+        padding = UIConfig:spacing("sm"),
+        bordersize = UIConfig:dim("border_thin"),
+        background = bg_color,
         left_stats,
     })
-    table.insert(stats_row, HorizontalSpan:new{width = 10})
+    table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
     table.insert(stats_row, FrameContainer:new{
         width = half_width,
-        padding = Size.padding.small,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
+        padding = UIConfig:spacing("sm"),
+        bordersize = UIConfig:dim("border_thin"),
+        background = bg_color,
         right_stats,
     })
 
@@ -587,29 +587,30 @@ function Read:showReadView()
     -- Build content
     local content = VerticalGroup:new{align = "left"}
 
-    -- Title
+    -- Title (standardized to page_title size)
     table.insert(content, TextWidget:new{
         text = "Reading",
-        face = Font:getFace("tfont", 20),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
     })
-    table.insert(content, VerticalSpan:new{width = Size.padding.default})
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("md")})
 
     -- All-time book stats (from KOReader statistics database)
     local book_stats = self:createBookStatsRow(content_width)
     table.insert(content, book_stats)
-    table.insert(content, VerticalSpan:new{width = Size.padding.small})
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("sm")})
 
     -- Today/Week reading stats row
     local stats_widget = self:createStatsOverview(content_width)
     table.insert(content, stats_widget)
 
-    -- Divider
-    table.insert(content, VerticalSpan:new{width = Size.padding.default})
+    -- Divider (uses muted color for subtle appearance)
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("lg")})
     table.insert(content, LineWidget:new{
         dimen = Geom:new{w = content_width, h = 1},
-        background = Blitbuffer.COLOR_LIGHT_GRAY,
+        background = UIConfig:color("muted"),
     })
-    table.insert(content, VerticalSpan:new{width = Size.padding.default})
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("md")})
 
     -- Book grid
     local grid_widget, card_positions = self:createBookGrid(self.books, content_width)

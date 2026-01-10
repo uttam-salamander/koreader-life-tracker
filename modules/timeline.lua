@@ -165,7 +165,8 @@ function Timeline:showTimelineView()
 
     table.insert(content, TextWidget:new{
         text = _("Timeline"),
-        face = Font:getFace("tfont", 18),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
         bold = true,
     })
 
@@ -258,8 +259,8 @@ function Timeline:showTimelineView()
     self.date_display_width = date_width
     self.nav_row_y = top_safe_zone  -- Y position of nav row (below top zone)
 
-    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
-    self.current_y = self.current_y + Size.padding.small
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
+    self.current_y = self.current_y + UIConfig:spacing("md")
 
     -- Get settings and quests
     local settings = Data:loadUserSettings()
@@ -281,24 +282,32 @@ function Timeline:showTimelineView()
         -- Slot header with separator line
         table.insert(content, LineWidget:new{
             dimen = Geom:new{ w = content_width, h = 2 },
-            background = Blitbuffer.COLOR_BLACK,
+            background = UIConfig:color("foreground"),
         })
         self.current_y = self.current_y + 2
         table.insert(content, TextWidget:new{
-            text = string.upper(slot),
-            face = Font:getFace("tfont", 16),
+            text = slot,  -- Title case (e.g., "Morning" not "MORNING")
+            face = UIConfig:getFont("tfont", UIConfig:fontSize("section_header")),
+            fgcolor = UIConfig:color("foreground"),
             bold = true,
         })
         self.current_y = self.current_y + 22
-        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
-        self.current_y = self.current_y + Size.padding.small
+        table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("sm") })
+        self.current_y = self.current_y + UIConfig:spacing("sm")
 
         -- Quest items for this slot
         if #slot_quests == 0 then
+            -- Friendly empty state message
+            local empty_messages = {
+                Morning = "No morning tasks",
+                Afternoon = "Afternoon is free",
+                Evening = "No evening tasks",
+                Night = "Rest well tonight",
+            }
             table.insert(content, TextWidget:new{
-                text = "  (no quests)",
-                face = Font:getFace("cfont", 14),
-                fgcolor = Blitbuffer.gray(0.4),
+                text = "  " .. (empty_messages[slot] or "No tasks"),
+                face = UIConfig:getFont("cfont", UIConfig:fontSize("body")),
+                fgcolor = UIConfig:color("muted"),
             })
             self.current_y = self.current_y + 20
         else
@@ -557,7 +566,8 @@ local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
 local PROGRESS_WIDTH = getProgressWidth()  -- Matches dashboard for consistent tap zones
 
 --[[--
-Build a single quest row with OK/Skip buttons (binary) or +/-/Skip buttons (progressive).
+Build a single quest row with OK/Skip buttons (binary) or +/- buttons (progressive).
+Progressive layout: [−] [3/10] [+] [Title] - matches Dashboard/Quests for consistency.
 --]]
 function Timeline:buildQuestRow(quest, content_width)
     local today = os.date("%Y-%m-%d")
@@ -572,8 +582,9 @@ function Timeline:buildQuestRow(quest, content_width)
     local row
 
     if quest.is_progressive then
-        -- Progressive quest layout: [−] [3/10] [+] [Skip] [Title]
-        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - getButtonWidth() - 6 - Size.padding.small
+        -- Progressive quest layout: [−] [3/10] [+] [Title] (matches Dashboard/Quests)
+        -- Total buttons/spans: scaled values for button and progress widths
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
 
         local title_widget = TextWidget:new{
             text = quest.title,
@@ -639,22 +650,6 @@ function Timeline:buildQuestRow(quest, content_width)
             },
         }
 
-        -- Skip button for progressive quests
-        local skip_button = FrameContainer:new{
-            width = getButtonWidth(),
-            height = getTouchTargetHeight() - 4,
-            padding = 2,
-            bordersize = 1,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
-                TextWidget:new{
-                    text = "Skip",
-                    face = Font:getFace("cfont", 10),
-                },
-            },
-        }
-
         row = HorizontalGroup:new{
             align = "center",
             minus_button,
@@ -662,8 +657,6 @@ function Timeline:buildQuestRow(quest, content_width)
             progress_display,
             HorizontalSpan:new{ width = 2 },
             plus_button,
-            HorizontalSpan:new{ width = 2 },
-            skip_button,
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
@@ -748,7 +741,8 @@ end
 
 --[[--
 Setup tap handlers for quest items.
-Handles both binary (OK/Skip) and progressive (+/-/Skip) quest layouts.
+Handles both binary (OK/Skip) and progressive (+/-) quest layouts.
+Progressive layout matches Dashboard/Quests for cross-screen consistency.
 --]]
 function Timeline:setupQuestTapHandlers()
     local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
@@ -777,8 +771,8 @@ function Timeline:setupQuestTapHandlers()
             local tap_x = ges.pos.x - Size.padding.large
 
             if quest.is_progressive then
-                -- Progressive quest layout: [−](35) [progress](60) [+](35) [Skip](50) [Title]
-                -- Positions: 0-35, 37-97, 99-134, 136-186, 186+
+                -- Progressive quest layout: [−](35) [progress](60) [+](35) [Title]
+                -- Matches Dashboard/Quests layout (no Skip button)
                 if tap_x < SMALL_BUTTON_WIDTH then
                     -- Minus button
                     timeline:decrementQuestProgress(quest)
@@ -788,11 +782,8 @@ function Timeline:setupQuestTapHandlers()
                 elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 4 + PROGRESS_WIDTH then
                     -- Plus button
                     timeline:incrementQuestProgress(quest)
-                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 6 + PROGRESS_WIDTH + getButtonWidth() then
-                    -- Skip button
-                    timeline:skipQuest(quest)
                 else
-                    -- Title area
+                    -- Title area - show quest actions menu
                     timeline:showQuestActions(quest)
                 end
             else

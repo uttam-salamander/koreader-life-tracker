@@ -109,35 +109,45 @@ function Quests:showQuestsView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- Leave top 10% free for KOReader system gestures
-    local top_safe_zone = math.floor(screen_height * 0.1)
+    -- KOReader reserves top 1/8 (12.5%) for menu gesture
+    -- Title can be in this zone (non-interactive), but gesture handlers must not be
+    local top_safe_zone = math.floor(screen_height / 8)
 
-    -- Track Y position for gesture handling (starts after top safe zone + padding)
-    self.current_y = top_safe_zone + Size.padding.large
+    -- Track visual Y position starting from frame padding
+    local visual_y = Size.padding.large
 
     -- Main content
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Top spacer for KOReader menu access
-    table.insert(content, VerticalSpan:new{ width = top_safe_zone })
-
-    -- Header (approximately 30px height)
-    table.insert(content, TextWidget:new{
+    -- Header (in top zone - non-interactive, standardized page title)
+    local title_widget = TextWidget:new{
         text = _("Quests"),
-        face = Font:getFace("tfont", 22),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
         bold = true,
-    })
-    self.current_y = self.current_y + 30
-    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
-    self.current_y = self.current_y + Size.padding.default
+    }
+    table.insert(content, title_widget)
+    visual_y = visual_y + title_widget:getSize().h
+
+    -- Add spacer to push interactive content below top_safe_zone
+    local spacer_needed = top_safe_zone - visual_y
+    if spacer_needed > 0 then
+        table.insert(content, VerticalSpan:new{ width = spacer_needed })
+        visual_y = visual_y + spacer_needed
+    end
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
+    visual_y = visual_y + UIConfig:spacing("md")
+
+    -- All interactive content starts here (below top_safe_zone)
+    self.current_y = visual_y
 
     -- Type tabs (Daily / Weekly / Monthly) - inline, no dialog
     self.type_tabs_y = self.current_y
     local type_tabs = self:buildTypeTabs()
     table.insert(content, type_tabs)
     self.current_y = self.current_y + getTypeTabHeight()
-    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
-    self.current_y = self.current_y + Size.padding.default
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
+    self.current_y = self.current_y + UIConfig:spacing("md")
 
     -- Separator
     table.insert(content, LineWidget:new{

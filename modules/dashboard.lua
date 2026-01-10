@@ -221,7 +221,8 @@ function Dashboard:showDashboardView()
     local greeting = self:getTimeBasedGreeting()
     local greeting_widget = TextWidget:new{
         text = greeting,
-        face = Font:getFace("tfont", 22),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
         bold = true,
     }
     table.insert(content, greeting_widget)
@@ -260,8 +261,8 @@ function Dashboard:showDashboardView()
     local energy_tabs = self:buildEnergyTabsVisual()
     table.insert(content, energy_tabs)
     self.current_y = self.current_y + getEnergyTabHeight()
-    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
-    self.current_y = self.current_y + Size.padding.small
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
+    self.current_y = self.current_y + UIConfig:spacing("md")
 
     -- ===== Daily Progress Bar =====
     local daily_stats = self:getDailyQuestStats()
@@ -361,54 +362,85 @@ function Dashboard:showDashboardView()
     end
 
     -- ===== Separator =====
+    -- Section separator
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("lg") })
     table.insert(content, LineWidget:new{
-        dimen = Geom:new{ w = content_width, h = Size.line.thick },
-        background = Blitbuffer.COLOR_BLACK,
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = UIConfig:color("muted"),
     })
-    table.insert(content, VerticalSpan:new{ width = Size.padding.default })
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("lg") })
 
-    -- ===== Streak Display =====
+    -- ===== Streak Display with Milestone Celebration =====
     local streak = (self.user_settings.streak_data and self.user_settings.streak_data.current) or 0
-    local streak_text = string.format(_("Streak: %d days"), streak)
+    local streak_text = string.format(_("Streak: %d day%s"), streak, streak == 1 and "" or "s")
+
+    -- Check for milestone celebrations
+    local milestone_text = nil
+    if streak == 7 then
+        milestone_text = "One week strong!"
+    elseif streak == 30 then
+        milestone_text = "One month champion!"
+    elseif streak == 100 then
+        milestone_text = "100 days - Incredible!"
+    elseif streak >= 365 then
+        milestone_text = "A year of dedication!"
+    end
+
     table.insert(content, TextWidget:new{
         text = streak_text,
-        face = Font:getFace("tfont", 18),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("section_header") + 2),
+        fgcolor = UIConfig:color("foreground"),
         bold = true,
     })
-    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+
+    -- Show milestone celebration if applicable
+    if milestone_text then
+        table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("xs") })
+        table.insert(content, TextWidget:new{
+            text = milestone_text,
+            face = UIConfig:getFont("cfont", UIConfig:fontSize("caption")),
+            fgcolor = UIConfig:color("muted"),
+        })
+    end
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("lg") })
 
     -- ===== Heatmap =====
     table.insert(content, TextWidget:new{
         text = _("Activity (12 Weeks)"),
-        face = Font:getFace("tfont", 16),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("section_header")),
+        fgcolor = UIConfig:color("foreground"),
     })
-    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("sm") })
 
     local heatmap_widget = self:buildDynamicHeatmap(content_width)
     if heatmap_widget then
         table.insert(content, heatmap_widget)
     end
-    table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("lg") })
 
     -- ===== Reading Stats =====
     local reading_stats = self:getReadingStats()
     if reading_stats then
+        -- Section separator
         table.insert(content, LineWidget:new{
-            dimen = Geom:new{ w = content_width, h = Size.line.medium },
-            background = Blitbuffer.gray(0.5),
+            dimen = Geom:new{ w = content_width, h = 1 },
+            background = UIConfig:color("muted"),
         })
-        table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+        table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
         table.insert(content, TextWidget:new{
             text = _("Today's Reading"),
-            face = Font:getFace("tfont", 16),
+            face = UIConfig:getFont("tfont", UIConfig:fontSize("section_header")),
+            fgcolor = UIConfig:color("foreground"),
         })
+        table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("xs") })
         local stats_text = string.format(_("Pages: %d | Time: %s"),
             reading_stats.pages or 0,
             self:formatReadingTime(reading_stats.time or 0)
         )
         table.insert(content, TextWidget:new{
             text = stats_text,
-            face = Font:getFace("cfont", 14),
+            face = UIConfig:getFont("cfont", UIConfig:fontSize("body")),
+            fgcolor = UIConfig:color("foreground"),
         })
     end
 

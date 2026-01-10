@@ -29,6 +29,7 @@ local _ = require("gettext")
 
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
+local UIConfig = require("modules/ui_config")
 
 local Journal = {}
 
@@ -81,10 +82,11 @@ function Journal:showJournalView()
 
     local content = VerticalGroup:new{ align = "left" }
 
-    -- Header (in top zone - non-interactive)
+    -- Header (in top zone - non-interactive, standardized page title)
     table.insert(content, TextWidget:new{
-        text = "JOURNAL & INSIGHTS",
-        face = Font:getFace("tfont", 20),
+        text = "Journal & Insights",
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
         bold = true,
     })
 
