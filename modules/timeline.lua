@@ -32,12 +32,26 @@ local _ = require("gettext")
 
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
+local UIConfig = require("modules/ui_config")
 
 local Timeline = {}
 
--- UI Constants (match Dashboard)
-local TOUCH_TARGET_HEIGHT = 48
-local BUTTON_WIDTH = 50
+-- UI Constants (scaled via UIConfig)
+local function getTouchTargetHeight()
+    return UIConfig:dim("touch_target_height")
+end
+
+local function getButtonWidth()
+    return UIConfig:dim("button_width")
+end
+
+local function getSmallButtonWidth()
+    return UIConfig:dim("small_button_width")
+end
+
+local function getProgressWidth()
+    return UIConfig:dim("progress_width")
+end
 
 --[[--
 Dispatch a corner gesture to the user's configured action.
@@ -166,18 +180,18 @@ function Timeline:showTimelineView()
     self.current_y = top_safe_zone
 
     -- Date navigation row: [<] [DATE] [>]
-    local NAV_BUTTON_WIDTH = 44
+    local NAV_BUTTON_WIDTH = UIConfig:scale(44)
     local date_width = content_width - NAV_BUTTON_WIDTH * 2 - Size.padding.small * 4
 
     -- Previous day button
     local prev_button = FrameContainer:new{
         width = NAV_BUTTON_WIDTH,
-        height = TOUCH_TARGET_HEIGHT,
+        height = getTouchTargetHeight(),
         padding = Size.padding.small,
         bordersize = 2,
         background = Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
-            dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
+            dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = getTouchTargetHeight() - Size.padding.small * 2},
             TextWidget:new{
                 text = "◀",
                 face = Font:getFace("tfont", 18),
@@ -190,12 +204,12 @@ function Timeline:showTimelineView()
     local header_text = is_today and ("TODAY - " .. display_date) or display_date
     local date_display = FrameContainer:new{
         width = date_width,
-        height = TOUCH_TARGET_HEIGHT,
+        height = getTouchTargetHeight(),
         padding = Size.padding.small,
         bordersize = 1,
         background = is_today and Blitbuffer.gray(0.95) or Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
-            dimen = Geom:new{w = date_width - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
+            dimen = Geom:new{w = date_width - Size.padding.small * 2, h = getTouchTargetHeight() - Size.padding.small * 2},
             TextWidget:new{
                 text = header_text,
                 face = Font:getFace("cfont", 14),
@@ -207,12 +221,12 @@ function Timeline:showTimelineView()
     -- Next day button
     local next_button = FrameContainer:new{
         width = NAV_BUTTON_WIDTH,
-        height = TOUCH_TARGET_HEIGHT,
+        height = getTouchTargetHeight(),
         padding = Size.padding.small,
         bordersize = 2,
         background = Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
-            dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = TOUCH_TARGET_HEIGHT - Size.padding.small * 2},
+            dimen = Geom:new{w = NAV_BUTTON_WIDTH - Size.padding.small * 2, h = getTouchTargetHeight() - Size.padding.small * 2},
             TextWidget:new{
                 text = "▶",
                 face = Font:getFace("tfont", 18),
@@ -229,7 +243,7 @@ function Timeline:showTimelineView()
     table.insert(nav_row, next_button)
 
     table.insert(content, nav_row)
-    self.current_y = self.current_y + TOUCH_TARGET_HEIGHT
+    self.current_y = self.current_y + getTouchTargetHeight()
 
     -- Store nav button positions for tap handling (relative to content start)
     self.nav_button_x = {
@@ -303,7 +317,7 @@ function Timeline:showTimelineView()
                 })
 
                 table.insert(content, quest_row)
-                self.current_y = self.current_y + TOUCH_TARGET_HEIGHT + 2
+                self.current_y = self.current_y + getTouchTargetHeight() + 2
             end
         end
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
@@ -391,7 +405,7 @@ function Timeline:showTimelineView()
     -- Date navigation tap handlers
     -- Nav row is BELOW top_safe_zone to avoid corner gesture conflicts
     local nav_row_y = self.nav_row_y
-    local nav_row_height = TOUCH_TARGET_HEIGHT
+    local nav_row_height = getTouchTargetHeight()
 
     -- Previous day button tap
     self.timeline_widget.ges_events.PrevDayTap = {
@@ -539,8 +553,8 @@ function Timeline:showTimelineView()
 end
 
 -- UI Constants for progressive quests (must match dashboard.lua)
-local SMALL_BUTTON_WIDTH = 35
-local PROGRESS_WIDTH = 70  -- Matches dashboard for consistent tap zones
+local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
+local PROGRESS_WIDTH = getProgressWidth()  -- Matches dashboard for consistent tap zones
 
 --[[--
 Build a single quest row with OK/Skip buttons (binary) or +/-/Skip buttons (progressive).
@@ -559,7 +573,7 @@ function Timeline:buildQuestRow(quest, content_width)
 
     if quest.is_progressive then
         -- Progressive quest layout: [−] [3/10] [+] [Skip] [Title]
-        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - BUTTON_WIDTH - 6 - Size.padding.small
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - getButtonWidth() - 6 - Size.padding.small
 
         local title_widget = TextWidget:new{
             text = quest.title,
@@ -571,12 +585,12 @@ function Timeline:buildQuestRow(quest, content_width)
         -- Minus button
         local minus_button = FrameContainer:new{
             width = SMALL_BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "−",
                     face = Font:getFace("cfont", 16),
@@ -594,12 +608,12 @@ function Timeline:buildQuestRow(quest, content_width)
 
         local progress_display = FrameContainer:new{
             width = PROGRESS_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = progress_bg,
             CenterContainer:new{
-                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = progress_text,
                     face = Font:getFace("cfont", 11),
@@ -611,12 +625,12 @@ function Timeline:buildQuestRow(quest, content_width)
         -- Plus button
         local plus_button = FrameContainer:new{
             width = SMALL_BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "+",
                     face = Font:getFace("cfont", 16),
@@ -627,13 +641,13 @@ function Timeline:buildQuestRow(quest, content_width)
 
         -- Skip button for progressive quests
         local skip_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "Skip",
                     face = Font:getFace("cfont", 10),
@@ -653,7 +667,7 @@ function Timeline:buildQuestRow(quest, content_width)
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
-                height = TOUCH_TARGET_HEIGHT,
+                height = getTouchTargetHeight(),
                 padding = Size.padding.small,
                 bordersize = 0,
                 background = status_bg,
@@ -662,7 +676,7 @@ function Timeline:buildQuestRow(quest, content_width)
         }
     else
         -- Binary quest layout: [OK] [Skip] [Title]
-        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
+        local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 3
 
         local title_widget = TextWidget:new{
             text = quest.title,
@@ -674,13 +688,13 @@ function Timeline:buildQuestRow(quest, content_width)
         -- Complete button (OK or X if already completed)
         local complete_text = quest.completed and "X" or "OK"
         local complete_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = complete_text,
                     face = Font:getFace("cfont", 12),
@@ -691,13 +705,13 @@ function Timeline:buildQuestRow(quest, content_width)
 
         -- Skip button
         local skip_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "Skip",
                     face = Font:getFace("cfont", 10),
@@ -713,7 +727,7 @@ function Timeline:buildQuestRow(quest, content_width)
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
-                height = TOUCH_TARGET_HEIGHT,
+                height = getTouchTargetHeight(),
                 padding = Size.padding.small,
                 bordersize = 0,
                 background = status_bg,
@@ -724,7 +738,7 @@ function Timeline:buildQuestRow(quest, content_width)
 
     return FrameContainer:new{
         width = content_width,
-        height = TOUCH_TARGET_HEIGHT,
+        height = getTouchTargetHeight(),
         padding = 0,
         bordersize = 1,
         background = status_bg,
@@ -751,7 +765,7 @@ function Timeline:setupQuestTapHandlers()
                     x = Size.padding.large,
                     y = row_y,
                     w = content_width,
-                    h = TOUCH_TARGET_HEIGHT,
+                    h = getTouchTargetHeight(),
                 },
             },
         }
@@ -774,7 +788,7 @@ function Timeline:setupQuestTapHandlers()
                 elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 4 + PROGRESS_WIDTH then
                     -- Plus button
                     timeline:incrementQuestProgress(quest)
-                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 6 + PROGRESS_WIDTH + BUTTON_WIDTH then
+                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 6 + PROGRESS_WIDTH + getButtonWidth() then
                     -- Skip button
                     timeline:skipQuest(quest)
                 else

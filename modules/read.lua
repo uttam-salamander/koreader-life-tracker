@@ -33,13 +33,22 @@ local _ = require("gettext")
 
 local Navigation = require("modules/navigation")
 local ReadingStats = require("modules/reading_stats")
+local UIConfig = require("modules/ui_config")
 
 local Read = {}
 
--- Grid configuration
-local GRID_COLS = 3
-local CARD_SPACING = Size.padding.default or 10
-local PROGRESS_BAR_HEIGHT = 4
+-- Grid configuration (scaled via UIConfig)
+local function getGridCols()
+    return UIConfig:dim("grid_columns")
+end
+
+local function getCardSpacing()
+    return UIConfig:dim("padding_default")
+end
+
+local function getProgressBarHeight()
+    return UIConfig:dim("progress_bar_height")
+end
 
 -- Scan Books folder for ebooks
 -- Set to nil to use only ReadHistory/database
@@ -299,7 +308,7 @@ Create a book card widget.
 --]]
 function Read:createBookCard(book, card_width, card_height)
     local title_height = 28
-    local progress_height = PROGRESS_BAR_HEIGHT + 2
+    local progress_height = getProgressBarHeight() + 2
     local cover_height = card_height - title_height - progress_height
 
     local cover = self:getCoverImage(book.file, card_width, cover_height)
@@ -320,7 +329,7 @@ function Read:createBookCard(book, card_width, card_height)
 
     local progress_widget = ProgressWidget:new{
         width = card_width,
-        height = PROGRESS_BAR_HEIGHT,
+        height = getProgressBarHeight(),
         percentage = book.progress or 0,
         margin_h = 0,
         margin_v = 0,
@@ -512,8 +521,8 @@ function Read:createBookGrid(books, content_width)
         }, card_positions
     end
 
-    local total_spacing = CARD_SPACING * (GRID_COLS - 1)
-    local card_width = math.floor((content_width - total_spacing) / GRID_COLS)
+    local total_spacing = getCardSpacing() * (getGridCols() - 1)
+    local card_width = math.floor((content_width - total_spacing) / getGridCols())
     local card_height = math.floor(card_width * 1.5)
 
     self.card_width = card_width
@@ -532,19 +541,19 @@ function Read:createBookGrid(books, content_width)
     local row_count = 0
 
     for i, book in ipairs(books) do
-        if (i - 1) % GRID_COLS == 0 and i > 1 then
+        if (i - 1) % getGridCols() == 0 and i > 1 then
             table.insert(grid, row)
-            table.insert(grid, VerticalSpan:new{width = CARD_SPACING})
+            table.insert(grid, VerticalSpan:new{width = getCardSpacing()})
             row = HorizontalGroup:new{align = "top"}
             row_count = row_count + 1
         elseif i > 1 then
-            table.insert(row, HorizontalSpan:new{width = CARD_SPACING})
+            table.insert(row, HorizontalSpan:new{width = getCardSpacing()})
         end
 
         local card = self:createBookCard(book, card_width, card_height)
         table.insert(row, card)
 
-        local col = (i - 1) % GRID_COLS
+        local col = (i - 1) % getGridCols()
         card_positions[i] = {
             col = col,
             row = row_count,
@@ -730,8 +739,8 @@ function Read:setupBookTapHandlers()
     local header_height = 150
 
     for i, pos in pairs(self.card_positions) do
-        local x = Size.padding.large + pos.col * (card_width + CARD_SPACING)
-        local y = header_height + pos.row * (card_height + CARD_SPACING)
+        local x = Size.padding.large + pos.col * (card_width + getCardSpacing())
+        local y = header_height + pos.row * (card_height + getCardSpacing())
 
         local gesture_name = "BookTap_" .. i
         self.read_widget.ges_events[gesture_name] = {

@@ -13,8 +13,27 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local _ = require("gettext")
 
 local Data = require("modules/data")
+local UIConfig = require("modules/ui_config")
 
 local Heatmap = {}
+
+--[[--
+Get the color for a given heat level.
+Uses UIConfig colors which support color screens and night mode.
+@param level Heat level 0-4
+@return Blitbuffer color
+--]]
+function Heatmap:getHeatColor(level)
+    local colors = UIConfig:getColors()
+    local heat_colors = {
+        colors.heat_0,
+        colors.heat_1,
+        colors.heat_2,
+        colors.heat_3,
+        colors.heat_4,
+    }
+    return heat_colors[math.min((level or 0) + 1, 5)]
+end
 
 -- Heatmap characters for e-ink display (grayscale compatible)
 -- Using block characters with different fill levels
@@ -150,10 +169,11 @@ function Heatmap:buildWidget(weeks, use_ascii)
     end
     legend = legend .. " Less → More"
 
+    local colors = UIConfig:getColors()
     table.insert(content, TextWidget:new{
         text = legend,
-        face = Font:getFace("cfont", 10),
-        fgcolor = Blitbuffer.gray(0.4),
+        face = UIConfig:getFont("cfont", 10),
+        fgcolor = colors.muted,
     })
 
     return content

@@ -32,12 +32,18 @@ local _ = require("gettext")
 
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
+local UIConfig = require("modules/ui_config")
 
 local Reminders = {}
 
--- UI Constants
-local REMINDER_ROW_HEIGHT = 50
-local BUTTON_WIDTH = 60
+-- UI Constants (scaled via UIConfig)
+local function getReminderRowHeight()
+    return UIConfig:dim("row_height")
+end
+
+local function getButtonWidth()
+    return UIConfig:dim("button_width")
+end
 
 -- Day abbreviations
 local DAY_NAMES = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
@@ -130,7 +136,7 @@ function Reminders:showRemindersView()
             local time_until = self:formatTimeUntil(reminder.time)
             local row = self:buildReminderRow(reminder, content_width, time_until)
             table.insert(content, row)
-            self.current_y = self.current_y + REMINDER_ROW_HEIGHT + 2
+            self.current_y = self.current_y + getReminderRowHeight() + 2
         end
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
         self.current_y = self.current_y + Size.padding.default
@@ -157,7 +163,7 @@ function Reminders:showRemindersView()
             local row = self:buildReminderRow(reminder, content_width)
             table.insert(content, row)
             table.insert(self.reminder_rows, {reminder = reminder, y = self.current_y})
-            self.current_y = self.current_y + REMINDER_ROW_HEIGHT + 2
+            self.current_y = self.current_y + getReminderRowHeight() + 2
         end
     end
 
@@ -188,7 +194,7 @@ function Reminders:showRemindersView()
             local row = self:buildReminderRow(reminder, content_width, nil, true)
             table.insert(content, row)
             table.insert(self.reminder_rows, {reminder = reminder, y = self.current_y})
-            self.current_y = self.current_y + REMINDER_ROW_HEIGHT + 2
+            self.current_y = self.current_y + getReminderRowHeight() + 2
         end
     end
 
@@ -201,12 +207,12 @@ function Reminders:showRemindersView()
     -- Add reminder button
     local add_button = FrameContainer:new{
         width = content_width,
-        height = REMINDER_ROW_HEIGHT,
+        height = getReminderRowHeight(),
         padding = Size.padding.small,
         bordersize = 2,
         background = Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
-            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = REMINDER_ROW_HEIGHT - Size.padding.small * 2},
+            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = getReminderRowHeight() - Size.padding.small * 2},
             TextWidget:new{
                 text = _("[+] Add New Reminder"),
                 face = Font:getFace("cfont", 16),
@@ -356,7 +362,7 @@ function Reminders:buildReminderRow(reminder, content_width, time_until, is_inac
     local bg_color = is_inactive and Blitbuffer.gray(0.95) or Blitbuffer.COLOR_WHITE
     local text_color = is_inactive and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
 
-    local title_width = content_width - BUTTON_WIDTH - Size.padding.small * 3
+    local title_width = content_width - getButtonWidth() - Size.padding.small * 3
 
     local repeat_text = self:formatRepeatDays(reminder.repeat_days)
     local time_text = reminder.time or "??:??"
@@ -379,13 +385,13 @@ function Reminders:buildReminderRow(reminder, content_width, time_until, is_inac
     local toggle_fg = reminder.active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
 
     local toggle_button = FrameContainer:new{
-        width = BUTTON_WIDTH,
-        height = REMINDER_ROW_HEIGHT - 4,
+        width = getButtonWidth(),
+        height = getReminderRowHeight() - 4,
         padding = 2,
         bordersize = 1,
         background = toggle_bg,
         CenterContainer:new{
-            dimen = Geom:new{w = BUTTON_WIDTH - 6, h = REMINDER_ROW_HEIGHT - 10},
+            dimen = Geom:new{w = getButtonWidth() - 6, h = getReminderRowHeight() - 10},
             TextWidget:new{
                 text = toggle_text,
                 face = Font:getFace("cfont", 12),
@@ -399,7 +405,7 @@ function Reminders:buildReminderRow(reminder, content_width, time_until, is_inac
         align = "center",
         FrameContainer:new{
             width = title_width,
-            height = REMINDER_ROW_HEIGHT,
+            height = getReminderRowHeight(),
             padding = Size.padding.small,
             bordersize = 0,
             background = bg_color,
@@ -411,7 +417,7 @@ function Reminders:buildReminderRow(reminder, content_width, time_until, is_inac
 
     return FrameContainer:new{
         width = content_width,
-        height = REMINDER_ROW_HEIGHT,
+        height = getReminderRowHeight(),
         padding = 0,
         bordersize = 1,
         background = bg_color,
@@ -430,7 +436,7 @@ function Reminders:setupGestureHandlers(content_width)  -- upcoming not used any
     -- Reminder row taps - use tracked Y positions
     for idx, row_info in ipairs(self.reminder_rows) do
         local row_y = row_info.y
-        local title_width = content_width - BUTTON_WIDTH - Size.padding.small * 3
+        local title_width = content_width - getButtonWidth() - Size.padding.small * 3
 
         -- Title area tap (opens menu)
         local title_gesture = "ReminderTitle_" .. idx
@@ -441,7 +447,7 @@ function Reminders:setupGestureHandlers(content_width)  -- upcoming not used any
                     x = Size.padding.large,
                     y = row_y,
                     w = title_width,
-                    h = REMINDER_ROW_HEIGHT,
+                    h = getReminderRowHeight(),
                 },
             },
         }
@@ -459,8 +465,8 @@ function Reminders:setupGestureHandlers(content_width)  -- upcoming not used any
                 range = Geom:new{
                     x = Size.padding.large + title_width + Size.padding.small,
                     y = row_y,
-                    w = BUTTON_WIDTH,
-                    h = REMINDER_ROW_HEIGHT,
+                    w = getButtonWidth(),
+                    h = getReminderRowHeight(),
                 },
             },
         }
@@ -478,7 +484,7 @@ function Reminders:setupGestureHandlers(content_width)  -- upcoming not used any
                 x = Size.padding.large,
                 y = self.add_button_y,
                 w = content_width,
-                h = REMINDER_ROW_HEIGHT,
+                h = getReminderRowHeight(),
             },
         },
     }
@@ -685,7 +691,8 @@ function Reminders:showAddReminder()
             {
                 text = _("Next"),
                 callback = function()
-                    local title = dialog:getInputText()
+                    -- Sanitize input to remove control characters
+                    local title = Data:sanitizeTextInput(dialog:getInputText(), MAX_REMINDER_TITLE_LENGTH)
                     if not title or title == "" then
                         UIManager:show(InfoMessage:new{
                             text = _("Please enter a title"),
@@ -1058,7 +1065,8 @@ function Reminders:showEditReminder(reminder)
             {
                 text = _("Save"),
                 callback = function()
-                    local new_title = dialog:getInputText()
+                    -- Sanitize input
+                    local new_title = Data:sanitizeTextInput(dialog:getInputText(), MAX_REMINDER_TITLE_LENGTH)
                     if not new_title or new_title == "" then
                         UIManager:show(InfoMessage:new{
                             text = _("Please enter a title"),

@@ -13,6 +13,7 @@ local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 
 local Data = require("modules/data")
+local UIConfig = require("modules/ui_config")
 
 local Settings = {}
 
@@ -65,6 +66,36 @@ function Settings:show(ui)
                     self:show(ui)
                 end,
                 help_text = _("Show dashboard when device wakes from sleep"),
+            },
+            {
+                text = _("Large Touch Targets"),
+                checked_func = function()
+                    return user_settings.large_touch_targets == true
+                end,
+                callback = function()
+                    user_settings.large_touch_targets = not user_settings.large_touch_targets
+                    Data:saveUserSettings(user_settings)
+                    -- Invalidate UIConfig dimensions to apply changes
+                    UIConfig:invalidateDimensions()
+                    UIManager:close(menu)
+                    self:show(ui)
+                end,
+                help_text = _("Increase button sizes for easier tapping"),
+            },
+            {
+                text = _("High Contrast Mode"),
+                checked_func = function()
+                    return user_settings.high_contrast == true
+                end,
+                callback = function()
+                    user_settings.high_contrast = not user_settings.high_contrast
+                    Data:saveUserSettings(user_settings)
+                    -- Update color scheme
+                    UIConfig:updateColorScheme()
+                    UIManager:close(menu)
+                    self:show(ui)
+                end,
+                help_text = _("Use stronger contrast for better visibility"),
             },
             {
                 text = _("Backup Data"),
@@ -205,7 +236,8 @@ function Settings:renameEnergyCategory(ui, user_settings, index)
                 text = _("Save"),
                 is_enter_default = true,
                 callback = function()
-                    local new_name = dialog:getInputText()
+                    -- Sanitize input
+                    local new_name = Data:sanitizeTextInput(dialog:getInputText(), 50)
                     if new_name and new_name ~= "" then
                         user_settings.energy_categories[index] = new_name
                         Data:saveUserSettings(user_settings)
@@ -241,7 +273,8 @@ function Settings:addEnergyCategory(ui, user_settings)
                 text = _("Add"),
                 is_enter_default = true,
                 callback = function()
-                    local new_name = dialog:getInputText()
+                    -- Sanitize input
+                    local new_name = Data:sanitizeTextInput(dialog:getInputText(), 50)
                     if new_name and new_name ~= "" then
                         table.insert(user_settings.energy_categories, new_name)
                         Data:saveUserSettings(user_settings)
@@ -363,7 +396,8 @@ function Settings:renameTimeSlot(ui, user_settings, index)
                 text = _("Save"),
                 is_enter_default = true,
                 callback = function()
-                    local new_name = dialog:getInputText()
+                    -- Sanitize input
+                    local new_name = Data:sanitizeTextInput(dialog:getInputText(), 50)
                     if new_name and new_name ~= "" then
                         user_settings.time_slots[index] = new_name
                         Data:saveUserSettings(user_settings)
@@ -399,7 +433,8 @@ function Settings:addTimeSlot(ui, user_settings)
                 text = _("Add"),
                 is_enter_default = true,
                 callback = function()
-                    local new_name = dialog:getInputText()
+                    -- Sanitize input
+                    local new_name = Data:sanitizeTextInput(dialog:getInputText(), 50)
                     if new_name and new_name ~= "" then
                         table.insert(user_settings.time_slots, new_name)
                         Data:saveUserSettings(user_settings)

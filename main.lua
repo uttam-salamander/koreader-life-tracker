@@ -21,7 +21,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local _ = require("gettext")
 
 -- Plugin modules (lazy loaded)
-local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingStats, Read
+local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingStats, Read, UIConfig
 
 local LifeTracker = WidgetContainer:extend{
     name = "lifetracker",
@@ -139,6 +139,14 @@ function LifeTracker:getReadingStats()
         ReadingStats = require("modules/reading_stats")
     end
     return ReadingStats
+end
+
+-- Lazy load UIConfig module
+function LifeTracker:getUIConfig()
+    if not UIConfig then
+        UIConfig = require("modules/ui_config")
+    end
+    return UIConfig
 end
 
 function LifeTracker:showDashboard()
@@ -281,6 +289,37 @@ Log reading stats.
 --]]
 function LifeTracker:onCloseDocument()
     self:getReadingStats():logCurrentStats(self.ui)
+end
+
+--[[--
+Handle night mode toggle event.
+Updates UIConfig color scheme when user toggles night mode.
+--]]
+function LifeTracker:onToggleNightMode()
+    local config = self:getUIConfig()
+    config:updateColorScheme()
+    -- Let event propagate to other widgets
+    return false
+end
+
+--[[--
+Handle color rendering update event.
+Updates UIConfig when color mode changes (for color e-readers).
+--]]
+function LifeTracker:onColorRenderingUpdate()
+    local config = self:getUIConfig()
+    config:updateColorScheme()
+    return false
+end
+
+--[[--
+Handle screen resize/rotation event.
+Invalidates cached dimensions in UIConfig.
+--]]
+function LifeTracker:onScreenResize()
+    local config = self:getUIConfig()
+    config:invalidateDimensions()
+    return false
 end
 
 --[[--

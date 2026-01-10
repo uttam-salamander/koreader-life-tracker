@@ -4,10 +4,8 @@ Provides a bullet journal-style right-side tab navigation.
 @module lifetracker.navigation
 --]]
 
-local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
-local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
@@ -22,6 +20,8 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local Screen = Device.screen
 local _ = require("gettext")
 
+local UIConfig = require("modules/ui_config")
+
 local Navigation = {}
 
 -- Tab definitions with vertical labels (diary-style rotated text)
@@ -35,8 +35,16 @@ Navigation.TABS = {
     {id = "read",      label = "READ", full = _("Reading")},
 }
 
--- Tab width for the right sidebar (wider for better touch targets)
-Navigation.TAB_WIDTH = 60
+--[[--
+Get the tab width (scaled based on screen DPI).
+@treturn number Tab width in pixels
+--]]
+function Navigation:getTabWidth()
+    return UIConfig:dim("tab_width")
+end
+
+-- Legacy constant for backwards compatibility
+Navigation.TAB_WIDTH = 60  -- Will be overridden by getTabWidth() in new code
 
 --[[--
 Create a wrapped content view with right-side tab navigation.
@@ -78,13 +86,17 @@ Build the vertical tab column.
 @return Widget Tab column widget
 --]]
 function Navigation:buildTabColumn(current_tab, height)
+    local tab_width = self:getTabWidth()
     local tab_height = math.floor(height / #self.TABS)
     local screen_width = Screen:getWidth()
-    local tab_x = screen_width - self.TAB_WIDTH  -- X position of tabs
+    local tab_x = screen_width - tab_width  -- X position of tabs
+
+    -- Get colors from UIConfig (night mode aware)
+    local colors = UIConfig:getColors()
 
     -- Create container that holds all tabs with gestures
     local tabs_container = InputContainer:new{
-        dimen = Geom:new{w = self.TAB_WIDTH, h = height},
+        dimen = Geom:new{w = tab_width, h = height},
         ges_events = {},  -- Will be populated with tab tap events
     }
 
@@ -93,10 +105,10 @@ function Navigation:buildTabColumn(current_tab, height)
     for idx, tab in ipairs(self.TABS) do
         local is_active = (tab.id == current_tab)
 
-        -- Tab background styling (high contrast for e-ink)
-        local bg_color = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
-        local fg_color = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-        local border_size = is_active and 2 or 1
+        -- Tab background styling (night mode aware, high contrast for e-ink)
+        local bg_color = is_active and colors.active_bg or colors.inactive_bg
+        local fg_color = is_active and colors.active_fg or colors.inactive_fg
+        local border_size = is_active and Size.border.thick or Size.border.thin
 
         -- Create vertical text label
         local vertical_label = VerticalGroup:new{ align = "center" }
@@ -104,17 +116,17 @@ function Navigation:buildTabColumn(current_tab, height)
             local char = tab.label:sub(i, i)
             table.insert(vertical_label, TextWidget:new{
                 text = char,
-                face = Font:getFace("tfont", 14),
+                face = UIConfig:getFont("tfont", 14),
                 fgcolor = fg_color,
                 bold = is_active,
             })
         end
 
         -- Wrap in container
-        local inner_width = self.TAB_WIDTH - Size.padding.small * 2
+        local inner_width = tab_width - Size.padding.small * 2
         local inner_height = tab_height - Size.padding.small * 2
         local tab_frame = FrameContainer:new{
-            width = self.TAB_WIDTH,
+            width = tab_width,
             height = tab_height,
             padding = Size.padding.small,
             bordersize = border_size,
@@ -136,7 +148,7 @@ function Navigation:buildTabColumn(current_tab, height)
                 range = Geom:new{
                     x = tab_x,
                     y = tab_y,
-                    w = self.TAB_WIDTH,
+                    w = tab_width,
                     h = tab_height,
                 },
             },
@@ -155,11 +167,11 @@ function Navigation:buildTabColumn(current_tab, height)
 
     -- Add the visual tabs group
     tabs_container[1] = FrameContainer:new{
-        width = self.TAB_WIDTH,
+        width = tab_width,
         height = height,
         padding = 0,
         bordersize = 0,
-        background = Blitbuffer.COLOR_WHITE,
+        background = colors.background,
         tabs_group,
     }
 
@@ -178,8 +190,9 @@ Shows content with right-side tabs.
 function Navigation:createView(content, current_tab, on_tab_change, on_close)
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    -- Leave top 10% free for KOReader system gestures (menu, etc.)
-    local top_safe_zone = math.floor(screen_height * 0.1)
+    -- Use UIConfig for safe zone calculation
+    local top_safe_zone = UIConfig:getTopSafeZone()
+    local colors = UIConfig:getColors()
 
     -- Wrap content with tabs
     local wrapped = self:wrap(content, current_tab, on_tab_change)
@@ -197,7 +210,7 @@ function Navigation:createView(content, current_tab, on_tab_change, on_close)
             height = screen_height - top_safe_zone,
             padding = 0,
             bordersize = 0,
-            background = Blitbuffer.COLOR_WHITE,
+            background = colors.background,
             wrapped,
         },
     }
@@ -296,7 +309,7 @@ Get the content width available after tab navigation.
 @return number Width in pixels
 --]]
 function Navigation:getContentWidth()
-    return Screen:getWidth() - self.TAB_WIDTH
+    return Screen:getWidth() - self:getTabWidth()
 end
 
 --[[--

@@ -37,14 +37,34 @@ local Data = require("modules/data")
 local Quests = require("modules/quests")
 local Navigation = require("modules/navigation")
 local Reminders = require("modules/reminders")
+local UIConfig = require("modules/ui_config")
 
 local Dashboard = {}
 
--- Touch target sizes (minimum 44px for accessibility)
-local TOUCH_TARGET_HEIGHT = 48
-local ENERGY_TAB_WIDTH = 90
-local ENERGY_TAB_HEIGHT = 44
-local BUTTON_WIDTH = 50
+-- Get scaled touch target sizes from UIConfig
+local function getTouchTargetHeight()
+    return UIConfig:dim("touch_target_height")
+end
+
+local function getEnergyTabWidth()
+    return UIConfig:dim("energy_tab_width")
+end
+
+local function getEnergyTabHeight()
+    return UIConfig:dim("energy_tab_height")
+end
+
+local function getButtonWidth()
+    return UIConfig:dim("button_width")
+end
+
+local function getSmallButtonWidth()
+    return UIConfig:dim("small_button_width")
+end
+
+local function getProgressWidth()
+    return UIConfig:dim("progress_width")
+end
 
 --[[--
 Dispatch a corner gesture to the user's configured action.
@@ -218,7 +238,7 @@ function Dashboard:showDashboardView()
     self.energy_tabs_y = self.current_y
     local energy_tabs = self:buildEnergyTabsVisual()
     table.insert(content, energy_tabs)
-    self.current_y = self.current_y + ENERGY_TAB_HEIGHT
+    self.current_y = self.current_y + getEnergyTabHeight()
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
     self.current_y = self.current_y + Size.padding.small
 
@@ -572,28 +592,30 @@ function Dashboard:buildEnergyTabsVisual()
 
     local x_offset = Size.padding.large
 
+    local colors = UIConfig:getColors()
+
     for idx, energy in ipairs(categories) do
         local is_active = (energy == current_energy)
 
-        -- High contrast styling for e-ink
-        local bg_color = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
-        local fg_color = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+        -- High contrast styling for e-ink (night mode aware)
+        local bg_color = is_active and colors.active_bg or colors.inactive_bg
+        local fg_color = is_active and colors.active_fg or colors.inactive_fg
 
         local label = TextWidget:new{
             text = energy,
-            face = Font:getFace("cfont", 16),
+            face = UIConfig:getFont("cfont", 16),
             fgcolor = fg_color,
             bold = is_active,
         }
 
         local tab_frame = FrameContainer:new{
-            width = ENERGY_TAB_WIDTH,
-            height = ENERGY_TAB_HEIGHT,
+            width = getEnergyTabWidth(),
+            height = getEnergyTabHeight(),
             padding = Size.padding.small,
-            bordersize = is_active and 2 or 1,
+            bordersize = is_active and Size.border.thick or Size.border.thin,
             background = bg_color,
             CenterContainer:new{
-                dimen = Geom:new{w = ENERGY_TAB_WIDTH - Size.padding.small * 2, h = ENERGY_TAB_HEIGHT - Size.padding.small * 2},
+                dimen = Geom:new{w = getEnergyTabWidth() - Size.padding.small * 2, h = getEnergyTabHeight() - Size.padding.small * 2},
                 label,
             },
         }
@@ -602,11 +624,11 @@ function Dashboard:buildEnergyTabsVisual()
         self.energy_tab_positions[idx] = {
             x = x_offset,
             y = 0,  -- Will be set during tap handler setup
-            w = ENERGY_TAB_WIDTH,
-            h = ENERGY_TAB_HEIGHT,
+            w = getEnergyTabWidth(),
+            h = getEnergyTabHeight(),
             energy = energy,
         }
-        x_offset = x_offset + ENERGY_TAB_WIDTH + 2
+        x_offset = x_offset + getEnergyTabWidth() + 2
 
         table.insert(tabs, tab_frame)
     end
@@ -632,8 +654,8 @@ function Dashboard:setupEnergyTapHandlers()
                 range = Geom:new{
                     x = x_offset,
                     y = energy_y,
-                    w = ENERGY_TAB_WIDTH,
-                    h = ENERGY_TAB_HEIGHT,
+                    w = getEnergyTabWidth(),
+                    h = getEnergyTabHeight(),
                 },
             },
         }
@@ -645,7 +667,7 @@ function Dashboard:setupEnergyTapHandlers()
             return true
         end
 
-        x_offset = x_offset + ENERGY_TAB_WIDTH + 2
+        x_offset = x_offset + getEnergyTabWidth() + 2
     end
 end
 
@@ -784,9 +806,9 @@ function Dashboard:buildQuestRow(quest, quest_type)
 
     if quest.is_progressive then
         -- Progressive quest layout: [−] [3/10] [+] [Title]
-        local SMALL_BUTTON_WIDTH = 35
-        local PROGRESS_WIDTH = 70
-        -- Total buttons/spans: 35 + 2 + 70 + 2 + 35 + padding.small = 144 + padding.small
+        local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
+        local PROGRESS_WIDTH = getProgressWidth()
+        -- Total buttons/spans: scaled values for button and progress widths
         local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
 
         -- Quest title with optional streak and category
@@ -805,12 +827,12 @@ function Dashboard:buildQuestRow(quest, quest_type)
         -- Minus button
         local minus_button = FrameContainer:new{
             width = SMALL_BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "−",
                     face = Font:getFace("cfont", 16),
@@ -828,12 +850,12 @@ function Dashboard:buildQuestRow(quest, quest_type)
 
         local progress_display = FrameContainer:new{
             width = PROGRESS_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = progress_bg,
             CenterContainer:new{
-                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = progress_text,
                     face = Font:getFace("cfont", 11),
@@ -845,12 +867,12 @@ function Dashboard:buildQuestRow(quest, quest_type)
         -- Plus button
         local plus_button = FrameContainer:new{
             width = SMALL_BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "+",
                     face = Font:getFace("cfont", 16),
@@ -869,7 +891,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
-                height = TOUCH_TARGET_HEIGHT,
+                height = getTouchTargetHeight(),
                 padding = Size.padding.small,
                 bordersize = 0,
                 background = status_bg,
@@ -878,7 +900,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
         }
     else
         -- Binary quest layout: [OK] [Skip] [Title]
-        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 3
+        local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 3
 
         -- Quest title with optional streak
         local quest_text = quest.title
@@ -896,13 +918,13 @@ function Dashboard:buildQuestRow(quest, quest_type)
         -- Complete button (OK or X if already completed)
         local complete_text = quest.completed and "X" or "OK"
         local complete_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = complete_text,
                     face = Font:getFace("cfont", 12),
@@ -913,13 +935,13 @@ function Dashboard:buildQuestRow(quest, quest_type)
 
         -- Skip button
         local skip_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = TOUCH_TARGET_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getTouchTargetHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = TOUCH_TARGET_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = "Skip",
                     face = Font:getFace("cfont", 10),
@@ -935,7 +957,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
-                height = TOUCH_TARGET_HEIGHT,
+                height = getTouchTargetHeight(),
                 padding = Size.padding.small,
                 bordersize = 0,
                 background = status_bg,
@@ -946,7 +968,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
 
     local quest_row = FrameContainer:new{
         width = content_width,
-        height = TOUCH_TARGET_HEIGHT,
+        height = getTouchTargetHeight(),
         padding = 0,
         bordersize = 1,
         background = status_bg,
@@ -961,7 +983,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
     })
 
     -- Update Y tracker
-    self.current_y = self.current_y + TOUCH_TARGET_HEIGHT + 2
+    self.current_y = self.current_y + getTouchTargetHeight() + 2
 
     return quest_row
 end
@@ -1032,7 +1054,7 @@ function Dashboard:setupQuestTapHandlers()
                     x = Size.padding.large,
                     y = row_y,
                     w = content_width,
-                    h = TOUCH_TARGET_HEIGHT,
+                    h = getTouchTargetHeight(),
                 },
             },
         }
@@ -1049,9 +1071,9 @@ function Dashboard:setupQuestTapHandlers()
 
             if quest.is_progressive then
                 -- Progressive quest layout: [−] [3/10] [+] [Title]
-                -- Layout: minus(35) + span(2) + progress(70) + span(2) + plus(35) + span(padding.small) + title
-                local SMALL_BUTTON_WIDTH = 35
-                local PROGRESS_WIDTH = 70
+                -- Layout: minus + span(2) + progress + span(2) + plus + span(padding.small) + title
+                local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
+                local PROGRESS_WIDTH = getProgressWidth()
 
                 if tap_x < SMALL_BUTTON_WIDTH then
                     -- Minus button

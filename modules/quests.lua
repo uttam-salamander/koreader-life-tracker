@@ -32,14 +32,34 @@ local _ = require("gettext")
 
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
+local UIConfig = require("modules/ui_config")
 
 local Quests = {}
 
--- UI Constants
-local QUEST_ROW_HEIGHT = 50
-local BUTTON_WIDTH = 50
-local TYPE_TAB_HEIGHT = 40
-local TYPE_TAB_WIDTH = 80
+-- UI Constants (scaled via UIConfig)
+local function getQuestRowHeight()
+    return UIConfig:dim("row_height")
+end
+
+local function getButtonWidth()
+    return UIConfig:dim("button_width")
+end
+
+local function getTypeTabHeight()
+    return UIConfig:dim("type_tab_height")
+end
+
+local function getTypeTabWidth()
+    return UIConfig:dim("type_tab_width")
+end
+
+local function getSmallButtonWidth()
+    return UIConfig:dim("small_button_width")
+end
+
+local function getProgressWidth()
+    return UIConfig:dim("progress_width")
+end
 
 -- Current view state
 Quests.current_type = "daily"
@@ -115,7 +135,7 @@ function Quests:showQuestsView()
     self.type_tabs_y = self.current_y
     local type_tabs = self:buildTypeTabs()
     table.insert(content, type_tabs)
-    self.current_y = self.current_y + TYPE_TAB_HEIGHT
+    self.current_y = self.current_y + getTypeTabHeight()
     table.insert(content, VerticalSpan:new{ width = Size.padding.default })
     self.current_y = self.current_y + Size.padding.default
 
@@ -150,7 +170,7 @@ function Quests:showQuestsView()
             local quest_row = self:buildQuestRow(quest, content_width)
             table.insert(content, quest_row)
             table.insert(self.quest_rows, {quest = quest, idx = idx, y = self.current_y})
-            self.current_y = self.current_y + QUEST_ROW_HEIGHT + 2
+            self.current_y = self.current_y + getQuestRowHeight() + 2
         end
     end
 
@@ -161,12 +181,12 @@ function Quests:showQuestsView()
     self.add_button_y = self.current_y
     local add_button = FrameContainer:new{
         width = content_width,
-        height = QUEST_ROW_HEIGHT,
+        height = getQuestRowHeight(),
         padding = Size.padding.small,
         bordersize = 2,
         background = Blitbuffer.COLOR_WHITE,
         CenterContainer:new{
-            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = QUEST_ROW_HEIGHT - Size.padding.small * 2},
+            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = getQuestRowHeight() - Size.padding.small * 2},
             TextWidget:new{
                 text = _("[+] Add New Quest"),
                 face = Font:getFace("cfont", 16),
@@ -313,13 +333,13 @@ function Quests:buildTypeTabs()
         local fg_color = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
 
         local tab = FrameContainer:new{
-            width = TYPE_TAB_WIDTH,
-            height = TYPE_TAB_HEIGHT,
+            width = getTypeTabWidth(),
+            height = getTypeTabHeight(),
             padding = Size.padding.small,
             bordersize = is_active and 2 or 1,
             background = bg_color,
             CenterContainer:new{
-                dimen = Geom:new{w = TYPE_TAB_WIDTH - Size.padding.small * 2, h = TYPE_TAB_HEIGHT - Size.padding.small * 2},
+                dimen = Geom:new{w = getTypeTabWidth() - Size.padding.small * 2, h = getTypeTabHeight() - Size.padding.small * 2},
                 TextWidget:new{
                     text = type_info.label,
                     face = Font:getFace("cfont", 14),
@@ -331,10 +351,10 @@ function Quests:buildTypeTabs()
 
         self.type_tab_positions[idx] = {
             x = x_offset + Size.padding.large,
-            w = TYPE_TAB_WIDTH,
+            w = getTypeTabWidth(),
             type_id = type_info.id,
         }
-        x_offset = x_offset + TYPE_TAB_WIDTH + 4
+        x_offset = x_offset + getTypeTabWidth() + 4
 
         table.insert(tabs, tab)
         if idx < #types then
@@ -363,9 +383,9 @@ function Quests:buildQuestRow(quest, content_width)
 
     if quest.is_progressive then
         -- Progressive quest layout: [−] [3/10 pages] [+] [Title]
-        local SMALL_BUTTON_WIDTH = 35
-        local PROGRESS_WIDTH = 80
-        -- Total buttons/spans: 35 + 2 + 80 + 2 + 35 + padding.small = 154 + padding.small
+        local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
+        local PROGRESS_WIDTH = getProgressWidth()
+        -- Total buttons/spans: scaled values for button and progress widths
         local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
 
         -- Build title with category prefix
@@ -386,12 +406,12 @@ function Quests:buildQuestRow(quest, content_width)
         -- Minus button
         local minus_button = FrameContainer:new{
             width = SMALL_BUTTON_WIDTH,
-            height = QUEST_ROW_HEIGHT - 4,
+            height = getQuestRowHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getQuestRowHeight() - 10},
                 TextWidget:new{
                     text = "−",
                     face = Font:getFace("cfont", 16),
@@ -412,12 +432,12 @@ function Quests:buildQuestRow(quest, content_width)
 
         local progress_display = FrameContainer:new{
             width = PROGRESS_WIDTH,
-            height = QUEST_ROW_HEIGHT - 4,
+            height = getQuestRowHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = progress_bg,
             CenterContainer:new{
-                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = getQuestRowHeight() - 10},
                 TextWidget:new{
                     text = progress_text,
                     face = Font:getFace("cfont", 11),
@@ -429,12 +449,12 @@ function Quests:buildQuestRow(quest, content_width)
         -- Plus button
         local plus_button = FrameContainer:new{
             width = SMALL_BUTTON_WIDTH,
-            height = QUEST_ROW_HEIGHT - 4,
+            height = getQuestRowHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getQuestRowHeight() - 10},
                 TextWidget:new{
                     text = "+",
                     face = Font:getFace("cfont", 16),
@@ -453,7 +473,7 @@ function Quests:buildQuestRow(quest, content_width)
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
-                height = QUEST_ROW_HEIGHT,
+                height = getQuestRowHeight(),
                 padding = Size.padding.small,
                 bordersize = 0,
                 background = status_bg,
@@ -462,7 +482,7 @@ function Quests:buildQuestRow(quest, content_width)
         }
     else
         -- Binary quest layout: [OK] [Skip] [Title]
-        local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
+        local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 4
 
         -- Build title with category or time slot prefix
         local title_text = quest.title
@@ -482,13 +502,13 @@ function Quests:buildQuestRow(quest, content_width)
         -- Complete button (checkmark)
         local complete_text = quest.completed and "X" or "OK"
         local complete_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = QUEST_ROW_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getQuestRowHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getQuestRowHeight() - 10},
                 TextWidget:new{
                     text = complete_text,
                     face = Font:getFace("cfont", 12),
@@ -499,13 +519,13 @@ function Quests:buildQuestRow(quest, content_width)
 
         -- Skip button
         local skip_button = FrameContainer:new{
-            width = BUTTON_WIDTH,
-            height = QUEST_ROW_HEIGHT - 4,
+            width = getButtonWidth(),
+            height = getQuestRowHeight() - 4,
             padding = 2,
             bordersize = 1,
             background = Blitbuffer.COLOR_WHITE,
             CenterContainer:new{
-                dimen = Geom:new{w = BUTTON_WIDTH - 6, h = QUEST_ROW_HEIGHT - 10},
+                dimen = Geom:new{w = getButtonWidth() - 6, h = getQuestRowHeight() - 10},
                 TextWidget:new{
                     text = "Skip",
                     face = Font:getFace("cfont", 10),
@@ -521,7 +541,7 @@ function Quests:buildQuestRow(quest, content_width)
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
                 width = title_width,
-                height = QUEST_ROW_HEIGHT,
+                height = getQuestRowHeight(),
                 padding = Size.padding.small,
                 bordersize = 0,
                 background = status_bg,
@@ -532,7 +552,7 @@ function Quests:buildQuestRow(quest, content_width)
 
     return FrameContainer:new{
         width = content_width,
-        height = QUEST_ROW_HEIGHT,
+        height = getQuestRowHeight(),
         padding = 0,
         bordersize = 1,
         background = status_bg,
@@ -559,7 +579,7 @@ function Quests:setupGestureHandlers(content_width)
                     x = pos.x,
                     y = type_y,
                     w = pos.w,
-                    h = TYPE_TAB_HEIGHT,
+                    h = getTypeTabHeight(),
                 },
             },
         }
@@ -584,9 +604,9 @@ function Quests:setupGestureHandlers(content_width)
 
         if quest.is_progressive then
             -- Progressive quest layout: [−] [progress] [+] [Title]
-            -- Layout: minus(35) + span(2) + progress(80) + span(2) + plus(35) + span(padding.small) + title
-            local SMALL_BUTTON_WIDTH = 35
-            local PROGRESS_WIDTH = 80
+            -- Layout: minus + span(2) + progress + span(2) + plus + span(padding.small) + title
+            local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
+            local PROGRESS_WIDTH = getProgressWidth()
             local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
 
             -- Minus button tap
@@ -598,7 +618,7 @@ function Quests:setupGestureHandlers(content_width)
                         x = Size.padding.large,
                         y = row_y,
                         w = SMALL_BUTTON_WIDTH,
-                        h = QUEST_ROW_HEIGHT,
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -616,7 +636,7 @@ function Quests:setupGestureHandlers(content_width)
                         x = Size.padding.large + SMALL_BUTTON_WIDTH + 2,
                         y = row_y,
                         w = PROGRESS_WIDTH,
-                        h = QUEST_ROW_HEIGHT,
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -634,7 +654,7 @@ function Quests:setupGestureHandlers(content_width)
                         x = Size.padding.large + SMALL_BUTTON_WIDTH + 2 + PROGRESS_WIDTH + 2,
                         y = row_y,
                         w = SMALL_BUTTON_WIDTH,
-                        h = QUEST_ROW_HEIGHT,
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -652,7 +672,7 @@ function Quests:setupGestureHandlers(content_width)
                         x = Size.padding.large + SMALL_BUTTON_WIDTH * 2 + PROGRESS_WIDTH + 4 + Size.padding.small,
                         y = row_y,
                         w = title_width,
-                        h = QUEST_ROW_HEIGHT,
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -662,7 +682,7 @@ function Quests:setupGestureHandlers(content_width)
             end
         else
             -- Binary quest layout: [OK] [Skip] [Title]
-            local title_width = content_width - BUTTON_WIDTH * 2 - Size.padding.small * 4
+            local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 4
 
             -- Complete (OK) button tap - leftmost position
             local complete_gesture = "QuestComplete_" .. idx
@@ -672,8 +692,8 @@ function Quests:setupGestureHandlers(content_width)
                     range = Geom:new{
                         x = Size.padding.large,
                         y = row_y,
-                        w = BUTTON_WIDTH,
-                        h = QUEST_ROW_HEIGHT,
+                        w = getButtonWidth(),
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -688,10 +708,10 @@ function Quests:setupGestureHandlers(content_width)
                 GestureRange:new{
                     ges = "tap",
                     range = Geom:new{
-                        x = Size.padding.large + BUTTON_WIDTH + 2,
+                        x = Size.padding.large + getButtonWidth() + 2,
                         y = row_y,
-                        w = BUTTON_WIDTH,
-                        h = QUEST_ROW_HEIGHT,
+                        w = getButtonWidth(),
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -706,10 +726,10 @@ function Quests:setupGestureHandlers(content_width)
                 GestureRange:new{
                     ges = "tap",
                     range = Geom:new{
-                        x = Size.padding.large + BUTTON_WIDTH * 2 + Size.padding.small + 2,
+                        x = Size.padding.large + getButtonWidth() * 2 + Size.padding.small + 2,
                         y = row_y,
                         w = title_width,
-                        h = QUEST_ROW_HEIGHT,
+                        h = getQuestRowHeight(),
                     },
                 },
             }
@@ -728,7 +748,7 @@ function Quests:setupGestureHandlers(content_width)
                 x = Size.padding.large,
                 y = self.add_button_y,
                 w = content_width,
-                h = QUEST_ROW_HEIGHT,
+                h = getQuestRowHeight(),
             },
         },
     }
@@ -995,22 +1015,16 @@ function Quests:showProgressInput(quest)
                 text = _("Set"),
                 is_enter_default = true,
                 callback = function()
-                    local value = tonumber(dialog:getInputText())
-                    if not value or value < 0 then
+                    -- Validate numeric input
+                    local value = Data:validateNumericInput(dialog:getInputText(), 0, target)
+                    if not value then
                         UIManager:show(InfoMessage:new{
-                            text = _("Please enter a valid number"),
+                            text = string.format(_("Please enter a number between 0 and %d"), target),
                             timeout = 2,
                         })
                         return
                     end
-                    if value > target then
-                        UIManager:show(InfoMessage:new{
-                            text = string.format(_("Value cannot exceed target (%d)"), target),
-                            timeout = 2,
-                        })
-                        return
-                    end
-                    local updated = Data:setQuestProgress(self.current_type, quest.id, value)
+                    local updated = Data:setQuestProgress(self.current_type, quest.id, math.floor(value))
                     if updated then
                         if updated.completed then
                             self:updateDailyLog()
@@ -1152,7 +1166,8 @@ function Quests:showQuestTitleInput(is_edit)
                 text = _("Next: Time Slot"),
                 is_enter_default = true,
                 callback = function()
-                    local title = dialog:getInputText()
+                    -- Sanitize input to remove control characters
+                    local title = Data:sanitizeTextInput(dialog:getInputText(), MAX_QUEST_TITLE_LENGTH)
                     if not title or title == "" then
                         UIManager:show(InfoMessage:new{
                             text = _("Please enter a title"),
@@ -1383,15 +1398,16 @@ function Quests:showProgressTargetInput(is_edit)
                 text = _("Next: Unit"),
                 is_enter_default = true,
                 callback = function()
-                    local target = tonumber(dialog:getInputText())
-                    if not target or target < 1 then
+                    -- Validate numeric input with bounds
+                    local target = Data:validateNumericInput(dialog:getInputText(), 1, 100000)
+                    if not target then
                         UIManager:show(InfoMessage:new{
-                            text = _("Please enter a number greater than 0"),
+                            text = _("Please enter a valid number between 1 and 100,000"),
                             timeout = 2,
                         })
                         return
                     end
-                    self.new_quest.progress_target = target
+                    self.new_quest.progress_target = math.floor(target)
                     UIManager:close(dialog)
                     self:showProgressUnitInput(is_edit)
                 end,
@@ -1422,10 +1438,12 @@ function Quests:showProgressUnitInput(is_edit)
                 text = _("Save Quest"),
                 is_enter_default = true,
                 callback = function()
-                    self.new_quest.progress_unit = dialog:getInputText()
-                    if self.new_quest.progress_unit == "" then
-                        self.new_quest.progress_unit = "units"
+                    -- Sanitize unit input
+                    local unit = Data:sanitizeTextInput(dialog:getInputText(), 50)
+                    if unit == "" then
+                        unit = "units"
                     end
+                    self.new_quest.progress_unit = unit
                     UIManager:close(dialog)
                     self:saveQuest(is_edit)
                 end,
@@ -1470,9 +1488,13 @@ function Quests:saveQuest(is_edit)
         })
     end
 
-    -- Refresh
-    UIManager:close(self.quests_widget)
+    -- Refresh - close old widget and show new one with proper dirty refresh
+    if self.quests_widget then
+        UIManager:close(self.quests_widget)
+    end
     self:showQuestsView()
+    -- Force a full UI refresh to ensure the new widget renders correctly
+    UIManager:setDirty("all", "ui")
 end
 
 --[[--
@@ -1498,8 +1520,11 @@ function Quests:confirmDeleteQuest(quest)
                         text = _("Quest deleted"),
                         timeout = 2,
                     })
-                    UIManager:close(self.quests_widget)
+                    if self.quests_widget then
+                        UIManager:close(self.quests_widget)
+                    end
                     self:showQuestsView()
+                    UIManager:setDirty("all", "ui")
                 end,
             }},
         },
