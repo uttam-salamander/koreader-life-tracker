@@ -142,7 +142,7 @@ function Read:getRecentBooks()
                     if pct then
                         progress = pct
                     end
-                    doc_settings:close()
+                    -- DocSettings doesn't need explicit close
                 end
             end
 
@@ -185,7 +185,7 @@ function Read:getRecentBooks()
                         if pct then
                             book.progress = pct
                         end
-                        doc_settings:close()
+                        -- DocSettings doesn't need explicit close
                     end
                 end
 
