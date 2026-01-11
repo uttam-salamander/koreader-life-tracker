@@ -105,7 +105,7 @@ function Reminders:showRemindersView()
         table.insert(content, VerticalSpan:new{ width = Size.padding.small })
         self.current_y = self.current_y + Size.padding.small
 
-        for _idx, reminder in ipairs(upcoming) do
+        for _, reminder in ipairs(upcoming) do
             local time_until = self:formatTimeUntil(reminder.time)
             local row = self:buildReminderRow(reminder, content_width, time_until)
             table.insert(content, row)
@@ -130,7 +130,7 @@ function Reminders:showRemindersView()
     -- Active reminders section
     self.reminder_rows = {}
     local active_count = 0
-    for _idx, reminder in ipairs(reminders) do
+    for _, reminder in ipairs(reminders) do
         if reminder.active then
             active_count = active_count + 1
             local row = self:buildReminderRow(reminder, content_width)
@@ -151,7 +151,7 @@ function Reminders:showRemindersView()
 
     -- Inactive reminders
     local inactive_count = 0
-    for _idx, reminder in ipairs(reminders) do
+    for _i, reminder in ipairs(reminders) do
         if not reminder.active then
             if inactive_count == 0 then
                 table.insert(content, VerticalSpan:new{ width = Size.padding.default })
@@ -429,7 +429,7 @@ function Reminders:formatRepeatDays(repeat_days)
     -- Check for weekdays (Mon-Fri)
     local weekdays = {Mon=true, Tue=true, Wed=true, Thu=true, Fri=true}
     local is_weekdays = true
-    for _idx, day in ipairs(repeat_days) do
+    for _, day in ipairs(repeat_days) do
         if not weekdays[day] then
             is_weekdays = false
             break
@@ -442,7 +442,7 @@ function Reminders:formatRepeatDays(repeat_days)
     -- Check for weekends (Sat-Sun)
     local weekends = {Sat=true, Sun=true}
     local is_weekends = true
-    for _idx, day in ipairs(repeat_days) do
+    for _, day in ipairs(repeat_days) do
         if not weekends[day] then
             is_weekends = false
             break
@@ -465,13 +465,13 @@ function Reminders:getUpcomingToday(reminders)
 
     local upcoming = {}
 
-    for _idx, reminder in ipairs(reminders) do
+    for _, reminder in ipairs(reminders) do
         if reminder.active then
             local is_today = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
                 is_today = true
             else
-                for _idx, day in ipairs(reminder.repeat_days) do
+                for _, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
                         is_today = true
                         break
@@ -908,7 +908,7 @@ function Reminders:showCustomDaysWithSelection(title, time, start_date)
         callback = function()
             UIManager:close(self.custom_dialog)
             local days = {}
-            for _idx, abbr in ipairs(DAY_NAMES) do
+            for _, abbr in ipairs(DAY_NAMES) do
                 if self.selected_days[abbr] then
                     table.insert(days, abbr)
                 end
@@ -1045,7 +1045,7 @@ function Reminders:checkDueReminders()
 
     local due = {}
 
-    for _idx, reminder in ipairs(reminders) do
+    for _, reminder in ipairs(reminders) do
         if reminder.active and reminder.time == current_time then
             local should_fire = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
@@ -1053,7 +1053,7 @@ function Reminders:checkDueReminders()
                     should_fire = true
                 end
             else
-                for _idx, day in ipairs(reminder.repeat_days) do
+                for _, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
                         if reminder.last_triggered ~= today_date then
                             should_fire = true
@@ -1093,13 +1093,13 @@ function Reminders:getTodayReminders()
 
     local today_reminders = {}
 
-    for _idx, reminder in ipairs(reminders) do
+    for _, reminder in ipairs(reminders) do
         if reminder.active then
             local is_today = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
                 is_today = true
             else
-                for _idx, day in ipairs(reminder.repeat_days) do
+                for _, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
                         is_today = true
                         break

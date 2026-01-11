@@ -34,7 +34,7 @@ Celebration._animation_files = nil
 Celebration.DEFAULT_SETTINGS = {
     enabled = true,
     selected_animation = nil,  -- nil = random
-    frame_delay = 0.1,         -- 100ms per frame (~10fps)
+    frame_delay = 0.05,        -- 50ms per frame (~20fps)
     timeout = 3.0,             -- Auto-dismiss after 3 seconds
 }
 
@@ -142,7 +142,7 @@ function Celebration:getAnimationToUse()
     -- If a specific animation is selected, use it
     if settings.selected_animation then
         local files = self:getAnimationFiles()
-        for _idx, filepath in ipairs(files) do
+        for _, filepath in ipairs(files) do
             if filepath:match("([^/]+)$") == settings.selected_animation then
                 return filepath
             end
@@ -327,7 +327,7 @@ function Celebration:getAnimationList()
     local files = self:getAnimationFiles()
     local list = {}
 
-    for _idx, filepath in ipairs(files) do
+    for _, filepath in ipairs(files) do
         local filename = filepath:match("([^/]+)$")
         -- Create a friendlier display name
         local display_name = filename:gsub("%.gif$", ""):sub(1, 16)

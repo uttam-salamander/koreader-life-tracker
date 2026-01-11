@@ -378,7 +378,7 @@ end
 
 function Data:updateQuest(quest_type, quest_id, updates)
     local quests = self:loadAllQuests()
-    for __, quest in ipairs(quests[quest_type]) do
+    for _, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id then
             for k, v in pairs(updates) do
                 quest[k] = v
@@ -426,7 +426,7 @@ Auto-completes when target is reached.
 --]]
 function Data:incrementQuestProgress(quest_type, quest_id)
     local quests = self:loadAllQuests()
-    for __, quest in ipairs(quests[quest_type]) do
+    for _, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
 
@@ -460,7 +460,7 @@ Decrement progress for a progressive quest.
 --]]
 function Data:decrementQuestProgress(quest_type, quest_id)
     local quests = self:loadAllQuests()
-    for __, quest in ipairs(quests[quest_type]) do
+    for _, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
 
@@ -494,7 +494,7 @@ Set progress for a progressive quest to a specific value.
 --]]
 function Data:setQuestProgress(quest_type, quest_id, value)
     local quests = self:loadAllQuests()
-    for __, quest in ipairs(quests[quest_type]) do
+    for _, quest in ipairs(quests[quest_type]) do
         if quest.id == quest_id and quest.is_progressive then
             local today = os.date("%Y-%m-%d")
             local target = quest.progress_target or 1
@@ -527,8 +527,8 @@ function Data:resetDailyProgress()
     local quests = self:loadAllQuests()
     local changed = false
 
-    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for __, quest in ipairs(quests[quest_type]) do
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type]) do
             if quest.is_progressive and quest.progress_last_date ~= today then
                 quest.progress_current = 0
                 quest.progress_last_date = today
@@ -698,7 +698,7 @@ end
 
 function Data:updateReminder(reminder_id, updates)
     local reminders = self:loadReminders()
-    for __, reminder in ipairs(reminders) do
+    for _, reminder in ipairs(reminders) do
         if reminder.id == reminder_id then
             for k, v in pairs(updates) do
                 reminder[k] = v

@@ -5,6 +5,7 @@ Integrates with KOReader's built-in statistics plugin.
 --]]
 
 local Data = require("modules/data")
+local Utils = require("modules/utils")
 
 local ReadingStats = {}
 
@@ -463,22 +464,12 @@ end
 
 --[[--
 Format reading time for display.
+Delegates to Utils.formatReadingTime for consistency.
 @param seconds Time in seconds
 @return string Formatted time (e.g., "1h 23m")
 --]]
 function ReadingStats:formatTime(seconds)
-    if not seconds or seconds == 0 then
-        return "0m"
-    end
-
-    local hours = math.floor(seconds / 3600)
-    local minutes = math.floor((seconds % 3600) / 60)
-
-    if hours > 0 then
-        return string.format("%dh %dm", hours, minutes)
-    else
-        return string.format("%dm", minutes)
-    end
+    return Utils.formatReadingTime(seconds)
 end
 
 --[[--

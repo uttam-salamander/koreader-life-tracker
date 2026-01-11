@@ -39,6 +39,7 @@ local Reminders = require("modules/reminders")
 local UIConfig = require("modules/ui_config")
 local UIHelpers = require("modules/ui_helpers")
 local Celebration = require("modules/celebration")
+local Utils = require("modules/utils")
 
 local Dashboard = {}
 
@@ -122,7 +123,7 @@ function Dashboard:getDailyQuestStats()
 
     -- Filter by energy and count
     local filtered = self:filterQuestsByEnergy(all_quests.daily, today_energy)
-    for _idx, quest in ipairs(filtered) do
+    for _, quest in ipairs(filtered) do
         total = total + 1
         if quest.completed then
             completed = completed + 1
@@ -399,7 +400,7 @@ function Dashboard:showDashboardView()
         table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("xs") })
         local stats_text = string.format(_("Pages: %d | Time: %s"),
             reading_stats.pages or 0,
-            self:formatReadingTime(reading_stats.time or 0)
+            Utils.formatReadingTime(reading_stats.time or 0)
         )
         table.insert(content, TextWidget:new{
             text = stats_text,
@@ -502,7 +503,7 @@ function Dashboard:buildEnergyTabsVisual()
 
     local tabs = HorizontalGroup:new{ align = "center" }
 
-    for _idx, energy in ipairs(categories) do
+    for _, energy in ipairs(categories) do
         local is_active = (energy == current_energy)
 
         -- Create a Button widget with built-in tap handling
@@ -559,7 +560,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
     -- Group quests by time slot
     local quests_by_slot = {}
     local other_quests = {}
-    for _idx, quest in ipairs(filtered) do
+    for _, quest in ipairs(filtered) do
         if quest.time_slot then
             if not quests_by_slot[quest.time_slot] then
                 quests_by_slot[quest.time_slot] = {}
@@ -572,7 +573,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
 
     -- Show quests grouped by time slot
     local shown = 0
-    for _idx, slot in ipairs(time_slots) do
+    for _, slot in ipairs(time_slots) do
         local slot_quests = quests_by_slot[slot]
         if slot_quests and #slot_quests > 0 then
             -- Time slot sub-header (18px height)
@@ -583,7 +584,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
             })
             self.current_y = self.current_y + 18
 
-            for _idx, quest in ipairs(slot_quests) do
+            for _, quest in ipairs(slot_quests) do
                 if shown >= 8 then break end
                 local quest_row = self:buildQuestRow(quest, quest_type)
                 table.insert(section, quest_row)
@@ -594,7 +595,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
 
     -- Show quests without time slot
     if #other_quests > 0 and shown < 8 then
-        for _idx, quest in ipairs(other_quests) do
+        for _, quest in ipairs(other_quests) do
             if shown >= 8 then break end
             local quest_row = self:buildQuestRow(quest, quest_type)
             table.insert(section, quest_row)
@@ -634,7 +635,7 @@ function Dashboard:buildQuestSection(title, quests, today_energy, quest_type)
 
     -- Quest items (max 5 per section on dashboard)
     local shown = 0
-    for _idx, quest in ipairs(filtered) do
+    for _, quest in ipairs(filtered) do
         if shown >= 5 then break end
         local quest_row = self:buildQuestRow(quest, quest_type)
         table.insert(section, quest_row)
@@ -861,7 +862,7 @@ function Dashboard:filterQuestsByEnergy(quests, energy_level)
     local current_level = energy_index[energy_level] or 2  -- Default to middle
     local is_high_energy = (current_level == 1)
 
-    for _idx, quest in ipairs(quests) do
+    for _, quest in ipairs(quests) do
         -- Skip quests that were skipped TODAY (they reappear tomorrow)
         if quest.skipped_date == today then
             goto continue
@@ -893,7 +894,7 @@ function Dashboard:skipQuest(quest, quest_type)
     local today = Data:getCurrentDate()
     local all_quests = Data:loadAllQuests()
 
-    for _idx, q in ipairs(all_quests[quest_type] or {}) do
+    for _, q in ipairs(all_quests[quest_type] or {}) do
         if q.id == quest.id then
             q.skipped_date = today
             break
@@ -1004,8 +1005,8 @@ function Dashboard:updateDailyLog()
     local total = 0
     local completed = 0
 
-    for _idx, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _idx, quest in ipairs(quests[quest_type] or {}) do
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
             total = total + 1
             if quest.completed and quest.completed_date == today then
                 completed = completed + 1
@@ -1125,7 +1126,7 @@ function Dashboard:toggleQuestComplete(quest, quest_type)
         local today = Data:getCurrentDate()
         local all_quests = Data:loadAllQuests()
 
-        for _idx, q in ipairs(all_quests[quest_type] or {}) do
+        for _, q in ipairs(all_quests[quest_type] or {}) do
             if q.id == quest.id then
                 -- Update streak
                 if q.completed_date then
@@ -1369,22 +1370,6 @@ function Dashboard:getReadingStats()
     end
 
     return nil
-end
-
---[[--
-Format reading time from seconds.
---]]
-function Dashboard:formatReadingTime(seconds)
-    if not seconds or seconds == 0 then
-        return "0m"
-    end
-    local hours = math.floor(seconds / 3600)
-    local mins = math.floor((seconds % 3600) / 60)
-    if hours > 0 then
-        return string.format("%dh %dm", hours, mins)
-    else
-        return string.format("%dm", mins)
-    end
 end
 
 return Dashboard

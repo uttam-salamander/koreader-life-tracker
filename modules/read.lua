@@ -200,7 +200,7 @@ function Read:getRecentBooks()
 
     -- Last fallback: Get books from KOReader statistics database
     local db_books = ReadingStats:getRecentBooksFromDB(12)
-    for _idx, db_book in ipairs(db_books) do
+    for _, db_book in ipairs(db_books) do
         table.insert(books, {
             file = nil,  -- DB doesn't store file path
             title = db_book.title,
@@ -450,8 +450,9 @@ function Read:createStatsOverview(content_width)
     local week_time_sec = week_db.time > 0 and week_db.time or (weekly.total_time or 0)
     local week_time = ReadingStats:formatTime(week_time_sec)
 
-    -- Use UIConfig for consistent spacing and colors
+    -- Use UIConfig for consistent spacing and colors (match book stats row)
     local card_spacing = UIConfig:dim("stat_card_spacing")
+    local card_height = UIConfig:dim("stat_card_height")
     local caption_font = UIConfig:fontSize("caption")
     local body_font = UIConfig:fontSize("body")
 
@@ -460,11 +461,9 @@ function Read:createStatsOverview(content_width)
     local muted_color = UIConfig:color("muted")
     local bg_color = UIConfig:color("background")
 
-    -- Note: half_width calculation moved to after outer padding/border accounting
-
-    -- Helper to create period stats
+    -- Helper to create period stats (centered in container)
     local function createPeriodStats(title, pages, time)
-        local stats_group = VerticalGroup:new{align = "left"}
+        local stats_group = VerticalGroup:new{align = "center"}
         table.insert(stats_group, TextWidget:new{
             text = title,
             face = UIConfig:getFont("tfont", caption_font),
@@ -488,34 +487,28 @@ function Read:createStatsOverview(content_width)
     local right_stats = createPeriodStats("This Week", week_pages, week_time)
 
     -- Calculate card widths to match book stats row styling
-    -- Account for outer padding and border that book stats row has
     local outer_padding = UIConfig:spacing("sm")
     local outer_border = UIConfig:dim("border_thin")
     local inner_content_width = content_width - (outer_padding * 2) - (outer_border * 2)
     local card_width = math.floor((inner_content_width - card_spacing) / 2)
 
-    local stats_row = HorizontalGroup:new{align = "top"}
-    table.insert(stats_row, FrameContainer:new{
-        width = card_width,
-        padding = 0,
-        bordersize = 0,
-        background = bg_color,
+    -- Use same height as upper stats row
+    local stats_row = HorizontalGroup:new{align = "center"}
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = card_width, h = card_height},
         left_stats,
     })
     table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
-    table.insert(stats_row, FrameContainer:new{
-        width = card_width,
-        padding = 0,
-        bordersize = 0,
-        background = bg_color,
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = card_width, h = card_height},
         right_stats,
     })
 
     -- Wrap in FrameContainer with same styling as book stats row
     return FrameContainer:new{
         width = content_width,
-        padding = outer_padding,
-        bordersize = outer_border,
+        padding = UIConfig:spacing("sm"),
+        bordersize = UIConfig:dim("border_thin"),
         background = bg_color,
         stats_row,
     }

@@ -13,7 +13,6 @@ local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
--- HorizontalGroup available if needed for future layouts
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local InfoMessage = require("ui/widget/infomessage")
@@ -37,11 +36,6 @@ local UIConfig = require("modules/ui_config")
 local UIHelpers = require("modules/ui_helpers")
 
 local Settings = {}
-
--- Row height for settings items
-local function getRowHeight()
-    return UIConfig:dim("touch_target_height")
-end
 
 --[[--
 Create a settings row with label and optional value/status.
@@ -980,7 +974,7 @@ function Settings:showAnimationSelector(ui, settings, animations)
     })
 
     -- List each animation
-    for _, anim in ipairs(animations) do
+    for _i, anim in ipairs(animations) do
         local is_selected = settings.selected_animation == anim.filename
         table.insert(items, {
             text = is_selected and (anim.display_name .. _(" (selected)")) or anim.display_name,
@@ -1020,7 +1014,7 @@ function Settings:showSpeedSelector(ui, settings)
     }
 
     local items = {}
-    for _, speed in ipairs(speeds) do
+    for _i, speed in ipairs(speeds) do
         local is_selected = math.abs(settings.frame_delay - speed.delay) < 0.01
         table.insert(items, {
             text = is_selected and (speed.label .. _(" (selected)")) or speed.label,
@@ -1061,7 +1055,7 @@ function Settings:showDurationSelector(ui, settings)
     }
 
     local items = {}
-    for _, dur in ipairs(durations) do
+    for _i, dur in ipairs(durations) do
         local is_selected = math.abs(settings.timeout - dur.time) < 0.1
         table.insert(items, {
             text = is_selected and (dur.label .. _(" (selected)")) or dur.label,
@@ -1131,7 +1125,6 @@ function Settings:showRestoreMenu(ui)
 
     local items = {}
     local menu
-    local navigating_away = false  -- Flag to prevent close_callback from showing settings
 
     for _, backup in ipairs(backups) do
         -- Format size in KB
@@ -1139,12 +1132,10 @@ function Settings:showRestoreMenu(ui)
         table.insert(items, {
             text = backup.created_at .. " (" .. size_kb .. ")",
             callback = function()
-                navigating_away = true
                 UIManager:close(menu)
                 self:confirmRestore(ui, backup)
             end,
             hold_callback = function()
-                navigating_away = true
                 UIManager:close(menu)
                 self:showBackupOptions(ui, backup)
             end,

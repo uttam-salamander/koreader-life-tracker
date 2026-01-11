@@ -6,15 +6,18 @@ Mood tracking, weekly review, and insights with reading correlation.
 
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
+local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LineWidget = require("ui/widget/linewidget")
+local Math = require("optmath")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
@@ -23,6 +26,7 @@ local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local Widget = require("ui/widget/widget")
 local Screen = Device.screen
 local _ = require("gettext")
 
@@ -32,6 +36,96 @@ local UIConfig = require("modules/ui_config")
 local UIHelpers = require("modules/ui_helpers")
 
 local Journal = {}
+
+--[[--
+Custom widget for drawing mood line graph using Blitbuffer.
+Displays dots for data points with connecting lines.
+--]]
+local MoodGraphWidget = Widget:extend{
+    width = nil,
+    height = nil,
+    data_points = nil,  -- Array of {value = 0-1, is_day_start = bool}
+    num_levels = 3,
+    day_labels = nil,   -- Array of day abbreviations
+    num_slots_per_day = 3,
+}
+
+function MoodGraphWidget:init()
+    self.dimen = Geom:new{w = self.width, h = self.height}
+end
+
+function MoodGraphWidget:paintTo(bb, x, y)
+    local num_points = #self.data_points
+    if num_points == 0 then return end
+
+    local graph_height = self.height - 20  -- Reserve space for labels
+    local graph_y = y
+
+    -- Calculate point spacing
+    local point_spacing = self.width / num_points
+    local dot_radius = 4
+    local line_thickness = 2
+
+    -- Draw horizontal grid lines for each level
+    for level = 1, self.num_levels do
+        local line_y = graph_y + Math.round((level - 1) * graph_height / (self.num_levels - 1))
+        bb:paintRect(x, line_y, self.width, 1, Blitbuffer.COLOR_LIGHT_GRAY)
+    end
+
+    -- Draw vertical day separators and collect points
+    -- Fill missing values with previous known value
+    local points = {}
+    local last_value = nil
+    for i, point in ipairs(self.data_points) do
+        local px = x + Math.round((i - 0.5) * point_spacing)
+
+        -- Draw day separator at start of each day
+        if point.is_day_start then
+            bb:paintRect(px - point_spacing/2, graph_y, 1, graph_height, Blitbuffer.COLOR_LIGHT_GRAY)
+        end
+
+        -- Use current value or fall back to last known value
+        local value = point.value or last_value
+        if value then
+            last_value = value
+            local py = graph_y + graph_height - Math.round(value * graph_height)
+            table.insert(points, {x = px, y = py, has_data = true, is_interpolated = (point.value == nil)})
+        else
+            table.insert(points, {x = px, y = nil, has_data = false})
+        end
+    end
+
+    -- Draw connecting lines between points (thicker for visibility)
+    for i = 1, #points - 1 do
+        local p1 = points[i]
+        local p2 = points[i + 1]
+        if p1.has_data and p2.has_data then
+            local dx = p2.x - p1.x
+            local dy = p2.y - p1.y
+            local steps = math.max(math.abs(dx), math.abs(dy))
+            if steps > 0 then
+                for step = 0, steps do
+                    local lx = Math.round(p1.x + dx * step / steps)
+                    local ly = Math.round(p1.y + dy * step / steps)
+                    -- Draw thicker line
+                    bb:paintRect(lx, ly - line_thickness/2, 1, line_thickness, Blitbuffer.COLOR_BLACK)
+                end
+            end
+        end
+    end
+
+    -- Draw dots on top of lines (larger dots for real data, smaller for interpolated)
+    for _, p in ipairs(points) do
+        if p.has_data then
+            local radius = p.is_interpolated and 2 or dot_radius
+            -- Draw filled circle
+            for dy = -radius, radius do
+                local dx = Math.round(math.sqrt(radius * radius - dy * dy))
+                bb:paintRect(p.x - dx, p.y + dy, dx * 2 + 1, 1, Blitbuffer.COLOR_BLACK)
+            end
+        end
+    end
+end
 
 --[[--
 Show the journal view.
@@ -109,14 +203,53 @@ function Journal:showJournalView()
     })
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
-    local mood_data, energy_categories = self:getWeeklyMood()
-    -- Use line graph visualization - calculate character width from pixel width
-    -- Monospace font at size 11 is approximately 7 pixels per character
-    local char_width = math.floor(content_width / 7)
-    local graph_widgets = self:renderMoodLineGraph(mood_data, energy_categories, char_width)
-    for _idx, widget in ipairs(graph_widgets) do
-        table.insert(content, widget)
+    local mood_data, energy_categories, time_slots = self:getWeeklyMood()
+
+    -- Build data points for pixel-based graph
+    local data_points = {}
+    local day_labels = {}
+
+    for _, day in ipairs(mood_data) do
+        table.insert(day_labels, day.abbr)
+        for slot_idx, slot in ipairs(time_slots) do
+            local score = day.slot_scores[slot]
+            local value = nil
+            if score then
+                -- Convert score (0-10) to ratio (0-1)
+                value = score / 10
+            end
+            table.insert(data_points, {
+                value = value,
+                is_day_start = (slot_idx == 1),
+            })
+        end
     end
+
+    -- Create pixel-based graph widget
+    local graph_height = Screen:scaleBySize(80)
+    local mood_graph = MoodGraphWidget:new{
+        width = content_width,
+        height = graph_height,
+        data_points = data_points,
+        num_levels = #energy_categories,
+        day_labels = day_labels,
+        num_slots_per_day = #time_slots,
+    }
+    table.insert(content, mood_graph)
+
+    -- Add day labels using TextWidgets for proper rendering
+    local label_row = HorizontalGroup:new{align = "center"}
+    local day_width = math.floor(content_width / #mood_data)
+    for _, day in ipairs(mood_data) do
+        table.insert(label_row, CenterContainer:new{
+            dimen = Geom:new{w = day_width, h = 16},
+            TextWidget:new{
+                text = day.abbr,
+                face = Font:getFace("cfont", 11),
+            },
+        })
+    end
+    table.insert(content, label_row)
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
     -- Persistent Notes Section (stays across days)
@@ -225,7 +358,7 @@ function Journal:showJournalView()
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     local spider_widgets = self:buildCategorySpiderChart(content_width)
-    for _idx, widget in ipairs(spider_widgets) do
+    for _, widget in ipairs(spider_widgets) do
         table.insert(content, widget)
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
@@ -474,13 +607,13 @@ function Journal:getWeeklyMood()
 
         -- Initialize slots for this day
         local slot_scores = {}
-        for _idx, slot in ipairs(time_slots) do
+        for _, slot in ipairs(time_slots) do
             slot_scores[slot] = nil  -- No data yet
         end
 
         -- Get mood entries and map to time slots
         local entries = day_data and day_data.energy_entries or {}
-        for _idx, entry in ipairs(entries) do
+        for _, entry in ipairs(entries) do
             local slot = entry.time_slot or Data:hourToTimeSlot(entry.hour, time_slots)
             local entry_score = energy_scores[entry.energy] or 0
             -- Keep the latest entry for each slot
@@ -491,7 +624,7 @@ function Journal:getWeeklyMood()
         if #entries == 0 and day_data and day_data.energy_level then
             local score = energy_scores[day_data.energy_level] or 0
             -- Apply to all slots as fallback
-            for _idx, slot in ipairs(time_slots) do
+            for _, slot in ipairs(time_slots) do
                 slot_scores[slot] = score
             end
         end
@@ -508,90 +641,78 @@ end
 
 --[[--
 Render a connected line graph for weekly mood using Unicode characters.
-Uses ● for data points and ╱─╲ for connections between points.
+Shows individual time slot data points expanded across the full width.
 @param mood_data table Weekly mood data from getWeeklyMood
 @param energy_categories table Energy level names
-@param _max_width number Maximum width in characters (unused, we use fixed widths)
+@param max_width number Maximum width in characters
+@param time_slots table Array of time slot names from user config
 @return table Array of TextWidgets for the graph
 --]]
-function Journal:renderMoodLineGraph(mood_data, energy_categories, _max_width)
+function Journal:renderMoodLineGraph(mood_data, energy_categories, max_width, time_slots)
     local widgets = {}
     local num_levels = #energy_categories
     local num_days = #mood_data
-
-    -- Calculate average daily score for each day (simplify from time slots)
-    local daily_scores = {}
+    local num_slots = time_slots and #time_slots or 3
+    local total_points = num_days * num_slots
     local score_step = 10 / num_levels
 
+    -- Build flat array of all data points (day1_slot1, day1_slot2, ..., day7_slotN)
+    local all_scores = {}
     for day_idx, day in ipairs(mood_data) do
-        local total_score = 0
-        local count = 0
-        for _idx, slot_score in pairs(day.slot_scores) do
-            if slot_score then
-                total_score = total_score + slot_score
-                count = count + 1
+        for slot_idx, slot in ipairs(time_slots) do
+            local score = day.slot_scores[slot]
+            if score then
+                -- Convert score (0-10) to row (1-num_levels)
+                local row = num_levels - math.floor(score / score_step)
+                row = math.max(1, math.min(num_levels, row))
+                table.insert(all_scores, {row = row, day_idx = day_idx, slot_idx = slot_idx})
+            else
+                table.insert(all_scores, {row = nil, day_idx = day_idx, slot_idx = slot_idx})
             end
-        end
-        -- Map score to row index (1 = top/highest energy, num_levels = bottom/lowest)
-        if count > 0 then
-            local avg_score = total_score / count
-            -- Convert score (0-10) to row (1-num_levels)
-            local row = num_levels - math.floor(avg_score / score_step)
-            row = math.max(1, math.min(num_levels, row))
-            daily_scores[day_idx] = row
-        else
-            daily_scores[day_idx] = nil  -- No data
         end
     end
 
-    -- Column width for each day (enough for point + connector)
-    local col_width = 6  -- "  ●── " pattern
+    -- Calculate column width to fill available space
+    -- Reserve 3 chars for y-axis label, use rest for data
+    local available_width = max_width - 4
+    local col_width = math.max(2, math.floor(available_width / total_points))
 
     -- Build each row of the graph
     for row = 1, num_levels do
         local label = string.sub(energy_categories[row], 1, 1)
-        local line = label .. " │"  -- Y-axis label with vertical bar
+        local line = label .. " │"
 
-        for day_idx = 1, num_days do
-            local day_row = daily_scores[day_idx]
-            local next_row = daily_scores[day_idx + 1]
+        for point_idx, point in ipairs(all_scores) do
+            local point_row = point.row
+            local next_point = all_scores[point_idx + 1]
+            local next_row = next_point and next_point.row
 
-            -- Determine what to draw at this position
             local cell = ""
 
-            if day_row == row then
-                -- This day's data point is on this row
-                cell = " ●"
-
-                -- Add connector to next point if exists
+            if point_row == row then
+                -- Data point on this row
+                cell = "●"
+                -- Add connector if next point exists
                 if next_row then
                     if next_row < row then
-                        cell = cell .. "╱ "  -- Going up (next is higher energy)
+                        cell = cell .. "╱"
                     elseif next_row > row then
-                        cell = cell .. "╲ "  -- Going down (next is lower energy)
+                        cell = cell .. "╲"
                     else
-                        cell = cell .. "──"  -- Same level
+                        cell = cell .. "─"
                     end
-                else
-                    cell = cell .. "  "  -- No next point
                 end
-            elseif day_row and next_row then
-                -- Check if connector passes through this row
-                local min_row = math.min(day_row, next_row)
-                local max_row = math.max(day_row, next_row)
-
+            elseif point_row and next_row then
+                -- Check if connector passes through
+                local min_row = math.min(point_row, next_row)
+                local max_row = math.max(point_row, next_row)
                 if row > min_row and row < max_row then
-                    -- Connector passes through this row
-                    if day_row < next_row then
-                        cell = "  ╲ "  -- Going down
+                    if point_row < next_row then
+                        cell = " ╲"
                     else
-                        cell = "  ╱ "  -- Going up
+                        cell = " ╱"
                     end
-                else
-                    cell = "    "  -- Empty
                 end
-            else
-                cell = "    "  -- Empty cell
             end
 
             -- Pad to col_width
@@ -607,22 +728,32 @@ function Journal:renderMoodLineGraph(mood_data, energy_categories, _max_width)
         })
     end
 
-    -- Baseline with axis
+    -- Baseline with tick marks for each slot
     local baseline = "  +"
-    for _ = 1, num_days do
-        baseline = baseline .. string.rep("─", col_width)
+    for _, point in ipairs(all_scores) do
+        -- Add day separator tick at start of each day
+        if point.slot_idx == 1 then
+            baseline = baseline .. "┬"
+        else
+            baseline = baseline .. "─"
+        end
+        -- Fill rest of column
+        for _ = 2, col_width do
+            baseline = baseline .. "─"
+        end
     end
     table.insert(widgets, TextWidget:new{
         text = baseline,
         face = Font:getFace("cfont", 11),
     })
 
-    -- Day labels centered under each column
-    local day_labels = "   "  -- Offset for y-axis label
-    for _idx, day in ipairs(mood_data) do
+    -- Day labels - centered under each day's slots
+    local day_col_width = col_width * num_slots
+    local day_labels = "   "
+    for _, day in ipairs(mood_data) do
         local abbr = day.abbr
-        local left_pad = math.floor((col_width - #abbr) / 2)
-        local right_pad = col_width - #abbr - left_pad
+        local left_pad = math.floor((day_col_width - #abbr) / 2)
+        local right_pad = day_col_width - #abbr - left_pad
         day_labels = day_labels .. string.rep(" ", left_pad) .. abbr .. string.rep(" ", right_pad)
     end
     table.insert(widgets, TextWidget:new{
@@ -946,14 +1077,14 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     -- Calculate completion rate per category
     local category_stats = {}
-    for _idx, cat in ipairs(categories) do
+    for _, cat in ipairs(categories) do
         category_stats[cat] = { completed = 0, total = 0 }
     end
     category_stats["None"] = { completed = 0, total = 0 }
 
     -- Count quests per category
-    for _idx, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _idx, quest in ipairs(quests[quest_type] or {}) do
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
             local cat = quest.category or "None"
             if not category_stats[cat] then
                 category_stats[cat] = { completed = 0, total = 0 }
@@ -967,7 +1098,7 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     -- Build data for spider chart (only categories with quests)
     local active_categories = {}
-    for _idx, cat in ipairs(categories) do
+    for _, cat in ipairs(categories) do
         if category_stats[cat] and category_stats[cat].total > 0 then
             local rate = category_stats[cat].completed / category_stats[cat].total
             table.insert(active_categories, { name = cat, rate = rate })
@@ -1092,7 +1223,7 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     else
         -- Fallback: simple horizontal bar chart for any number of categories
-        for _idx, cat_data in ipairs(active_categories) do
+        for _, cat_data in ipairs(active_categories) do
             local bar_width = 20
             local filled = math.floor(cat_data.rate * bar_width)
             local bar = string.rep("█", filled) .. string.rep("░", bar_width - filled)
