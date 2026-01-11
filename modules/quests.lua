@@ -599,10 +599,14 @@ function Quests:toggleQuestComplete(quest)
                     if q.completed_date == yesterday then
                         q.streak = (q.streak or 0) + 1
                     elseif q.completed_date ~= today then
+                        -- Missed a day, reset streak
                         q.streak = 1
                     end
+                    -- If completed_date == today, keep current streak (already counted)
                 else
-                    q.streak = 1
+                    -- No previous completion date (new quest or uncompleted)
+                    -- Preserve streak if exists (toggle off/on same day), else start at 1
+                    q.streak = math.max(q.streak or 0, 1)
                 end
                 q.completed = true
                 q.completed_date = today

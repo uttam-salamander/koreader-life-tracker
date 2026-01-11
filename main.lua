@@ -355,6 +355,32 @@ Clean up timer and database connections to prevent memory/resource leaks.
 function LifeTracker:onCloseWidget()
     self:stopReminderCheck()
 
+    -- Close any open module widgets to prevent memory leaks
+    if Dashboard and Dashboard.dashboard_widget then
+        UIManager:close(Dashboard.dashboard_widget)
+        Dashboard.dashboard_widget = nil
+    end
+    if Quests and Quests.quests_widget then
+        UIManager:close(Quests.quests_widget)
+        Quests.quests_widget = nil
+    end
+    if Journal and Journal.journal_widget then
+        UIManager:close(Journal.journal_widget)
+        Journal.journal_widget = nil
+    end
+    if Reminders and Reminders.reminders_widget then
+        UIManager:close(Reminders.reminders_widget)
+        Reminders.reminders_widget = nil
+    end
+    if Settings and Settings.settings_widget then
+        UIManager:close(Settings.settings_widget)
+        Settings.settings_widget = nil
+    end
+    if Read and Read.read_widget then
+        UIManager:close(Read.read_widget)
+        Read.read_widget = nil
+    end
+
     -- Close reading stats database connection
     if ReadingStats then
         ReadingStats:close()

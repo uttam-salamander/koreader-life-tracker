@@ -16,25 +16,22 @@ local Data = {}
 -- ============================================
 
 --[[--
-Get yesterday's date string in a DST-safe way.
-Uses calendar arithmetic instead of subtracting seconds.
+Get yesterday's date string.
+Uses timestamp arithmetic which handles DST and month boundaries correctly.
 @return string Date in YYYY-MM-DD format
 --]]
 function Data:getYesterdayDate()
-    local t = os.date("*t")
-    t.day = t.day - 1
-    return os.date("%Y-%m-%d", os.time(t))
+    return os.date("%Y-%m-%d", os.time() - 86400)
 end
 
 --[[--
-Get a date N days ago in a DST-safe way.
+Get a date N days ago.
+Uses timestamp arithmetic which handles DST and month boundaries correctly.
 @param days_ago number Number of days to go back
 @return string Date in YYYY-MM-DD format
 --]]
 function Data:getDateDaysAgo(days_ago)
-    local t = os.date("*t")
-    t.day = t.day - days_ago
-    return os.date("%Y-%m-%d", os.time(t))
+    return os.date("%Y-%m-%d", os.time() - (days_ago * 86400))
 end
 
 --[[--
@@ -528,7 +525,7 @@ function Data:resetDailyProgress()
     local changed = false
 
     for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for _, quest in ipairs(quests[quest_type]) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
             if quest.is_progressive and quest.progress_last_date ~= today then
                 quest.progress_current = 0
                 quest.progress_last_date = today
@@ -1133,11 +1130,11 @@ function Data:importBackupFromFile(filepath)
     local ok, backup = pcall(rapidjson.load, filepath)
 
     if not ok then
-        return false, "Failed to parse backup file: " .. tostring(backup)
+        return false, "Backup file contains invalid JSON"
     end
 
-    if not backup then
-        return false, "Backup file is empty or invalid"
+    if type(backup) ~= "table" then
+        return false, "Backup file has invalid structure"
     end
 
     return self:restoreFromBackup(backup)

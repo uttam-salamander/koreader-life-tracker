@@ -145,7 +145,20 @@ end
 
 function SpiderGraphWidget:paintTo(bb, x, y)
     local num_axes = #self.data
-    if num_axes < 3 then return end  -- Need at least 3 axes for spider chart
+    if num_axes < 3 then
+        -- Not enough categories for spider chart, draw placeholder text
+        local Font = require("ui/font")
+        local TextWidget = require("ui/widget/textwidget")
+        local text = TextWidget:new{
+            text = "Need 3+ categories",
+            face = Font:getFace("cfont", 12),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local text_size = text:getSize()
+        text:paintTo(bb, x + (self.width - text_size.w) / 2, y + (self.height - text_size.h) / 2)
+        text:free()
+        return
+    end
 
     local center_x = x + self.width / 2
     local center_y = y + self.height / 2
@@ -1011,9 +1024,10 @@ function Journal:showEditPersistentNotes()
                 {
                     text = _("Save"),
                     callback = function()
-                        local text = self.notes_dialog:getInputText()
+                        -- Sanitize input to prevent data corruption
+                        local text = Data:sanitizeTextInput(self.notes_dialog:getInputText(), 10000)
                         UIManager:close(self.notes_dialog)
-                        Data:savePersistentNotes(text)
+                        Data:savePersistentNotes(text or "")
                         -- Refresh journal view
                         UIManager:close(self.journal_widget)
                         self:showJournalView()
@@ -1147,8 +1161,9 @@ function Journal:showMonthlySummary()
 
     -- Get all days this month
     for date, data in pairs(logs) do
-        local year, month = date:match("(%d+)-(%d+)")
-        if tonumber(year) == today.year and tonumber(month) == today.month then
+        -- Use anchored pattern to ensure proper YYYY-MM format
+        local year, month = date:match("^(%d%d%d%d)%-(%d%d)")
+        if year and month and tonumber(year) == today.year and tonumber(month) == today.month then
             days_logged = days_logged + 1
             total_completed = total_completed + (data.quests_completed or 0)
             total_assigned = total_assigned + (data.quests_total or 0)

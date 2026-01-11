@@ -199,7 +199,7 @@ function Read:getRecentBooks()
     end
 
     -- Last fallback: Get books from KOReader statistics database
-    local db_books = ReadingStats:getRecentBooksFromDB(12)
+    local db_books = ReadingStats:getRecentBooksFromDB(12) or {}
     for _, db_book in ipairs(db_books) do
         table.insert(books, {
             file = nil,  -- DB doesn't store file path
@@ -279,15 +279,16 @@ function Read:getCoverImage(filepath, width, height)
     end)
 
     if ok and doc then
-        if doc.getCoverPageImage then
-            local cok, cover = pcall(function()
-                return doc:getCoverPageImage()
-            end)
-            if cok and cover then
-                cover_bb = cover
+        -- Wrap cover extraction in pcall to ensure doc:close() always runs
+        pcall(function()
+            if doc.getCoverPageImage then
+                local cok, cover = pcall(doc.getCoverPageImage, doc)
+                if cok and cover then
+                    cover_bb = cover
+                end
             end
-        end
-        doc:close()
+        end)
+        doc:close()  -- Always close document to prevent resource leak
     end
 
     if cover_bb then
