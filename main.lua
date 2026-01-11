@@ -17,7 +17,6 @@ An ADHD-friendly bullet journal style planner with:
 local Dispatcher = require("dispatcher")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local InfoMessage = require("ui/widget/infomessage")
 local _ = require("gettext")
 
 -- Plugin modules (lazy loaded)
@@ -345,11 +344,8 @@ function LifeTracker:onFlushSettings()
     data:flushAll()
 
     -- Create daily auto-backup (keeps last 7 days)
-    local ok, msg = data:autoBackup(7)
-    if not ok and msg ~= "Auto-backup already exists for today" then
-        local logger = require("logger")
-        logger.warn("Life Tracker auto-backup failed:", msg)
-    end
+    -- Silently ignore failures (user can manually backup in settings)
+    data:autoBackup(7)
 end
 
 --[[--

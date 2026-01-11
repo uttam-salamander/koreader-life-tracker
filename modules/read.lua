@@ -50,9 +50,9 @@ local function getProgressBarHeight()
     return UIConfig:dim("progress_bar_height")
 end
 
--- Scan Books folder for ebooks
--- Set to nil to use only ReadHistory/database
-Read.TEST_BOOKS_PATH = "Books"
+-- Scan Books folder for ebooks (development only)
+-- Set to nil to use only ReadHistory/database (production)
+Read.TEST_BOOKS_PATH = nil
 
 -- Supported ebook extensions
 local EBOOK_EXTENSIONS = {
