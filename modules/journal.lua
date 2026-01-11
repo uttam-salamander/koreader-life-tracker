@@ -723,7 +723,9 @@ function Journal:getWeeklyMood()
 
     -- Map energy levels to scores (first = highest)
     local energy_scores = {}
-    local score_step = 10 / #energy_categories
+    local num_categories = #energy_categories
+    if num_categories == 0 then num_categories = 3 end  -- Prevent division by zero
+    local score_step = 10 / num_categories
     for i, cat in ipairs(energy_categories) do
         energy_scores[cat] = math.floor((#energy_categories - i + 1) * score_step)
     end

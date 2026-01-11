@@ -409,6 +409,8 @@ end
 Edit an existing energy category.
 --]]
 function Settings:editEnergyCategory(ui, user_settings, index)
+    -- Bounds check
+    if index < 1 or index > #user_settings.energy_categories then return end
     local current = user_settings.energy_categories[index]
 
     local dialog
@@ -458,6 +460,8 @@ end
 Rename an energy category.
 --]]
 function Settings:renameEnergyCategory(ui, user_settings, index)
+    -- Bounds check
+    if index < 1 or index > #user_settings.energy_categories then return end
     local current = user_settings.energy_categories[index]
 
     local dialog
@@ -568,6 +572,8 @@ end
 Edit an existing time slot.
 --]]
 function Settings:editTimeSlot(ui, user_settings, index)
+    -- Bounds check
+    if index < 1 or index > #user_settings.time_slots then return end
     local current = user_settings.time_slots[index]
 
     local dialog
@@ -617,6 +623,8 @@ end
 Rename a time slot.
 --]]
 function Settings:renameTimeSlot(ui, user_settings, index)
+    -- Bounds check
+    if index < 1 or index > #user_settings.time_slots then return end
     local current = user_settings.time_slots[index]
 
     local dialog
