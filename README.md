@@ -17,7 +17,7 @@ A bullet journal-style life planner plugin for KOReader. Track quests, habits, m
 
 ### Method 1: Download Release
 
-1. Download the latest release from [Releases](https://github.com/koreader/koreader-life-tracker/releases)
+1. Download the latest release from [Releases](https://github.com/uttam-salamander/koreader-life-tracker/releases)
 2. Extract `lifetracker.koplugin` folder
 3. Copy to your KOReader plugins directory (see paths below)
 4. Restart KOReader
@@ -27,7 +27,7 @@ A bullet journal-style life planner plugin for KOReader. Track quests, habits, m
 ```bash
 # Clone directly to your plugins folder
 cd /path/to/koreader/plugins/
-git clone https://github.com/koreader/koreader-life-tracker.git lifetracker.koplugin
+git clone https://github.com/uttam-salamander/koreader-life-tracker.git lifetracker.koplugin
 ```
 
 ### Plugin Paths by Device
