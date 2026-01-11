@@ -9,7 +9,6 @@ local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
-local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
@@ -19,6 +18,8 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local Screen = Device.screen
 local _ = require("gettext")
 
+local AnimatedImageWidget = require("modules/animated_image")
+local Data = require("modules/data")
 local UIConfig = require("modules/ui_config")
 
 local Celebration = {}
@@ -28,6 +29,14 @@ Celebration.ANIMATIONS_DIR = "Animations"
 
 -- Cache for animation file list
 Celebration._animation_files = nil
+
+-- Default settings
+Celebration.DEFAULT_SETTINGS = {
+    enabled = true,
+    selected_animation = nil,  -- nil = random
+    frame_delay = 0.1,         -- 100ms per frame (~10fps)
+    timeout = 3.0,             -- Auto-dismiss after 3 seconds
+}
 
 --[[--
 Get the plugin root directory.
@@ -94,26 +103,77 @@ function Celebration:getRandomAnimation()
 end
 
 --[[--
-Load an image from a GIF file.
-Uses ImageWidget's built-in file loading (extracts first frame for GIFs).
+Get celebration settings from user data.
+@treturn table Celebration settings
+--]]
+function Celebration:getSettings()
+    local user_settings = Data:loadUserSettings()
+    local celebration_settings = user_settings.celebration or {}
+
+    -- Merge with defaults
+    local settings = {}
+    for key, default_val in pairs(self.DEFAULT_SETTINGS) do
+        settings[key] = celebration_settings[key]
+        if settings[key] == nil then
+            settings[key] = default_val
+        end
+    end
+
+    return settings
+end
+
+--[[--
+Save celebration settings.
+@tparam table settings Settings to save
+--]]
+function Celebration:saveSettings(settings)
+    local user_settings = Data:loadUserSettings()
+    user_settings.celebration = settings
+    Data:saveUserSettings(user_settings)
+end
+
+--[[--
+Get the animation file to use based on settings.
+@treturn string|nil Path to animation file, or nil if none available
+--]]
+function Celebration:getAnimationToUse()
+    local settings = self:getSettings()
+
+    -- If a specific animation is selected, use it
+    if settings.selected_animation then
+        local files = self:getAnimationFiles()
+        for _idx, filepath in ipairs(files) do
+            if filepath:match("([^/]+)$") == settings.selected_animation then
+                return filepath
+            end
+        end
+    end
+
+    -- Otherwise use random
+    return self:getRandomAnimation()
+end
+
+--[[--
+Create an animated image widget for a GIF file.
 @tparam string filepath Path to the GIF file
 @tparam number width Desired width
 @tparam number height Desired height
-@treturn ImageWidget|nil Image widget or nil if loading failed
+@tparam number frame_delay Delay between frames in seconds
+@treturn AnimatedImageWidget|nil Widget or nil if loading failed
 --]]
-function Celebration:loadAnimationImage(filepath, width, height)
+function Celebration:createAnimatedWidget(filepath, width, height, frame_delay)
     if not filepath then
         return nil
     end
 
-    -- Use ImageWidget's file parameter - it handles GIFs natively
     local ok, widget = pcall(function()
-        return ImageWidget:new{
+        return AnimatedImageWidget:new{
             file = filepath,
             width = width,
             height = height,
-            scale_factor = 0,
-            autostretch = true,
+            frame_delay = frame_delay or 0.1,
+            loop = true,
+            max_loops = 0,  -- Infinite until dismissed
         }
     end)
 
@@ -126,13 +186,19 @@ end
 
 --[[--
 Show a celebration dialog for quest completion.
-Displays a random animation with congratulation text.
+Displays an animated GIF with congratulation text.
 @tparam string message Optional custom message (default: "Quest completed!")
-@tparam number timeout Auto-dismiss timeout in seconds (default: 1.5)
 --]]
-function Celebration:showCompletion(message, timeout)
+function Celebration:showCompletion(message)
+    local settings = self:getSettings()
+
+    -- Check if celebrations are enabled
+    if not settings.enabled then
+        return
+    end
+
     message = message or _("Quest completed!")
-    timeout = timeout or 1.5
+    local timeout = settings.timeout or 3.0
 
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
@@ -144,22 +210,30 @@ function Celebration:showCompletion(message, timeout)
     local image_height = math.floor(dialog_height * 0.65)
     local image_width = math.floor(dialog_width * 0.8)
 
-    -- Try to load a random animation
-    local animation_path = self:getRandomAnimation()
-    local image_widget = self:loadAnimationImage(animation_path, image_width, image_height)
+    -- Get animation to use
+    local animation_path = self:getAnimationToUse()
+    local animated_widget = self:createAnimatedWidget(
+        animation_path,
+        image_width,
+        image_height,
+        settings.frame_delay
+    )
 
     -- Build dialog content
     local content = VerticalGroup:new{ align = "center" }
 
-    -- Add animation image if loaded
-    if image_widget then
+    -- Store reference for cleanup
+    self._animated_widget = animated_widget
+
+    -- Add animation if loaded
+    if animated_widget then
         table.insert(content, CenterContainer:new{
             dimen = Geom:new{ w = dialog_width - Size.padding.large * 2, h = image_height },
-            image_widget,
+            animated_widget,
         })
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
     else
-        -- No image available, just show a larger text area
+        -- No animation available, just show a larger text area
         table.insert(content, VerticalSpan:new{ width = Size.padding.large * 2 })
     end
 
@@ -169,7 +243,7 @@ function Celebration:showCompletion(message, timeout)
         TextWidget:new{
             text = message,
             face = UIConfig:getFont("tfont", 18),
-            fgcolor = colors.foreground,
+            fgcolor = colors.foreground or require("ffi/blitbuffer").COLOR_BLACK,
             bold = true,
         },
     })
@@ -180,7 +254,7 @@ function Celebration:showCompletion(message, timeout)
         height = dialog_height,
         padding = Size.padding.large,
         bordersize = Size.border.thick,
-        background = colors.background,
+        background = colors.background or require("ffi/blitbuffer").COLOR_WHITE,
         radius = Size.radius.window,
         content,
     }
@@ -208,20 +282,66 @@ function Celebration:showCompletion(message, timeout)
     -- Tap to dismiss
     local celebration = self
     self.celebration_widget.onTap = function()
-        UIManager:close(celebration.celebration_widget)
+        celebration:closeCelebration()
         return true
     end
 
-    -- Show dialog
+    -- Show dialog and start animation
     UIManager:show(self.celebration_widget)
+
+    -- Start animation playback
+    if animated_widget then
+        animated_widget.show_parent = self.celebration_widget
+        animated_widget:play()
+    end
 
     -- Auto-dismiss after timeout
     UIManager:scheduleIn(timeout, function()
-        if celebration.celebration_widget then
-            UIManager:close(celebration.celebration_widget)
-            celebration.celebration_widget = nil
-        end
+        celebration:closeCelebration()
     end)
+end
+
+--[[--
+Close the celebration dialog and clean up resources.
+--]]
+function Celebration:closeCelebration()
+    -- Stop and free animated widget
+    if self._animated_widget then
+        self._animated_widget:stop()
+        self._animated_widget:free()
+        self._animated_widget = nil
+    end
+
+    -- Close the dialog
+    if self.celebration_widget then
+        UIManager:close(self.celebration_widget)
+        self.celebration_widget = nil
+    end
+end
+
+--[[--
+Get list of available animations with display names.
+@treturn table List of {filename, display_name} pairs
+--]]
+function Celebration:getAnimationList()
+    local files = self:getAnimationFiles()
+    local list = {}
+
+    for _idx, filepath in ipairs(files) do
+        local filename = filepath:match("([^/]+)$")
+        -- Create a friendlier display name
+        local display_name = filename:gsub("%.gif$", ""):sub(1, 16)
+        if #display_name < #filename - 4 then
+            display_name = display_name .. "..."
+        end
+        table.insert(list, {
+            filename = filename,
+            filepath = filepath,
+            display_name = display_name,
+        })
+    end
+
+    return list
 end
 
 return Celebration

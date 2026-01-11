@@ -13,6 +13,7 @@ local Menu = require("ui/widget/menu")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 
+local Celebration = require("modules/celebration")
 local Data = require("modules/data")
 local UIConfig = require("modules/ui_config")
 
@@ -105,6 +106,14 @@ function Settings:show(ui)
                     self:showQuotesMenu(ui, user_settings)
                 end,
                 help_text = _("Manage inspirational quotes shown on dashboard"),
+            },
+            {
+                text = _("Celebration Animations"),
+                callback = function()
+                    UIManager:close(menu)
+                    self:showCelebrationMenu(ui)
+                end,
+                help_text = _("Configure quest completion animations"),
             },
             {
                 text = _("Backup Data"),
@@ -638,6 +647,217 @@ function Settings:editQuote(ui, user_settings, index)
     }
     UIManager:show(dialog)
     dialog:onShowKeyboard()
+end
+
+-- ============================================
+-- Celebration Settings Functions
+-- ============================================
+
+--[[--
+Show celebration settings menu.
+--]]
+function Settings:showCelebrationMenu(ui)
+    local settings = Celebration:getSettings()
+    local animations = Celebration:getAnimationList()
+
+    local items = {}
+
+    -- Enable/disable toggle
+    table.insert(items, {
+        text = settings.enabled and _("Celebrations: ON") or _("Celebrations: OFF"),
+        callback = function()
+            settings.enabled = not settings.enabled
+            Celebration:saveSettings(settings)
+            UIManager:show(InfoMessage:new{
+                text = settings.enabled and _("Celebrations enabled") or _("Celebrations disabled"),
+                timeout = 2,
+            })
+            self:showCelebrationMenu(ui)
+        end,
+    })
+
+    -- Animation selection
+    local current_anim = settings.selected_animation or _("Random")
+    table.insert(items, {
+        text = _("Animation: ") .. current_anim,
+        callback = function()
+            self:showAnimationSelector(ui, settings, animations)
+        end,
+    })
+
+    -- Animation speed
+    local speed_labels = {
+        [0.05] = _("Fast (20 fps)"),
+        [0.1] = _("Normal (10 fps)"),
+        [0.15] = _("Slow (7 fps)"),
+        [0.2] = _("Very Slow (5 fps)"),
+    }
+    local current_speed = speed_labels[settings.frame_delay] or string.format("%.0f ms", settings.frame_delay * 1000)
+    table.insert(items, {
+        text = _("Speed: ") .. current_speed,
+        callback = function()
+            self:showSpeedSelector(ui, settings)
+        end,
+    })
+
+    -- Display duration
+    table.insert(items, {
+        text = string.format(_("Duration: %.1f seconds"), settings.timeout),
+        callback = function()
+            self:showDurationSelector(ui, settings)
+        end,
+    })
+
+    -- Preview animation
+    if #animations > 0 then
+        table.insert(items, {
+            text = _("Preview Animation"),
+            callback = function()
+                Celebration:showCompletion(_("Preview!"))
+            end,
+        })
+    end
+
+    local menu
+    menu = Menu:new{
+        title = _("Celebration Animations"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+            self:show(ui)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+--[[--
+Show animation selector.
+--]]
+function Settings:showAnimationSelector(ui, settings, animations)
+    local items = {}
+
+    -- Random option
+    table.insert(items, {
+        text = settings.selected_animation == nil and _("Random (selected)") or _("Random"),
+        callback = function()
+            settings.selected_animation = nil
+            Celebration:saveSettings(settings)
+            UIManager:show(InfoMessage:new{
+                text = _("Animation set to random"),
+                timeout = 2,
+            })
+            self:showCelebrationMenu(ui)
+        end,
+    })
+
+    -- List each animation
+    for _idx, anim in ipairs(animations) do
+        local is_selected = settings.selected_animation == anim.filename
+        table.insert(items, {
+            text = is_selected and (anim.display_name .. _(" (selected)")) or anim.display_name,
+            callback = function()
+                settings.selected_animation = anim.filename
+                Celebration:saveSettings(settings)
+                UIManager:show(InfoMessage:new{
+                    text = _("Animation selected: ") .. anim.display_name,
+                    timeout = 2,
+                })
+                self:showCelebrationMenu(ui)
+            end,
+        })
+    end
+
+    local menu
+    menu = Menu:new{
+        title = _("Select Animation"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+            self:showCelebrationMenu(ui)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+--[[--
+Show animation speed selector.
+--]]
+function Settings:showSpeedSelector(ui, settings)
+    local speeds = {
+        { delay = 0.05, label = _("Fast (20 fps)") },
+        { delay = 0.1, label = _("Normal (10 fps)") },
+        { delay = 0.15, label = _("Slow (7 fps)") },
+        { delay = 0.2, label = _("Very Slow (5 fps)") },
+    }
+
+    local items = {}
+    for _idx, speed in ipairs(speeds) do
+        local is_selected = math.abs(settings.frame_delay - speed.delay) < 0.01
+        table.insert(items, {
+            text = is_selected and (speed.label .. _(" (selected)")) or speed.label,
+            callback = function()
+                settings.frame_delay = speed.delay
+                Celebration:saveSettings(settings)
+                UIManager:show(InfoMessage:new{
+                    text = _("Speed set to: ") .. speed.label,
+                    timeout = 2,
+                })
+                self:showCelebrationMenu(ui)
+            end,
+        })
+    end
+
+    local menu
+    menu = Menu:new{
+        title = _("Animation Speed"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+            self:showCelebrationMenu(ui)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+--[[--
+Show display duration selector.
+--]]
+function Settings:showDurationSelector(ui, settings)
+    local durations = {
+        { time = 1.5, label = _("1.5 seconds") },
+        { time = 2.0, label = _("2 seconds") },
+        { time = 3.0, label = _("3 seconds") },
+        { time = 5.0, label = _("5 seconds") },
+        { time = 10.0, label = _("10 seconds") },
+    }
+
+    local items = {}
+    for _idx, dur in ipairs(durations) do
+        local is_selected = math.abs(settings.timeout - dur.time) < 0.1
+        table.insert(items, {
+            text = is_selected and (dur.label .. _(" (selected)")) or dur.label,
+            callback = function()
+                settings.timeout = dur.time
+                Celebration:saveSettings(settings)
+                UIManager:show(InfoMessage:new{
+                    text = _("Duration set to: ") .. dur.label,
+                    timeout = 2,
+                })
+                self:showCelebrationMenu(ui)
+            end,
+        })
+    end
+
+    local menu
+    menu = Menu:new{
+        title = _("Display Duration"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+            self:showCelebrationMenu(ui)
+        end,
+    }
+    UIManager:show(menu)
 end
 
 -- ============================================
