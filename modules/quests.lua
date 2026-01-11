@@ -178,7 +178,7 @@ function Quests:showQuestsView()
 
     -- Wrap content
     local padded_content = FrameContainer:new{
-        width = screen_width - Navigation.TAB_WIDTH,
+        width = screen_width - Navigation.TAB_WIDTH - Size.padding.large,  -- Right padding from nav
         height = screen_height,
         padding = Size.padding.large,
         bordersize = 0,
@@ -471,6 +471,8 @@ function Quests:switchType(type_id)
             UIManager:close(self.quests_widget)
         end
         self:showQuestsView()
+        -- Force full screen refresh for e-ink display
+        UIManager:setDirty(nil, "full")
     end
 end
 

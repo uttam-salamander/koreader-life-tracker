@@ -226,7 +226,7 @@ function UIHelpers.buildMainLayout(content, tab_id, screen_dims, ui, on_close)
     local screen_width = screen_dims.screen_width
     local screen_height = screen_dims.screen_height
 
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local scroll_height = screen_height
 
     -- Inner frame with padding

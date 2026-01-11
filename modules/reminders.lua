@@ -5,6 +5,7 @@ Time-based reminders with gentle notifications.
 --]]
 
 local Blitbuffer = require("ffi/blitbuffer")
+local Button = require("ui/widget/button")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
@@ -124,6 +125,16 @@ function Reminders:showRemindersView()
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
     self.current_y = self.current_y + Size.padding.small
 
+    -- All Reminders section header
+    table.insert(content, TextWidget:new{
+        text = _("All Reminders"),
+        face = Font:getFace("tfont", 16),
+        bold = true,
+    })
+    self.current_y = self.current_y + 24
+    table.insert(content, VerticalSpan:new{ width = Size.padding.small })
+    self.current_y = self.current_y + Size.padding.small
+
     -- Store starting Y for reminder rows
     self.reminder_list_start_y = self.current_y
 
@@ -174,30 +185,27 @@ function Reminders:showRemindersView()
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
     self.current_y = self.current_y + Size.padding.large
 
-    -- Store add button Y position
-    self.add_button_y = self.current_y
-
-    -- Add reminder button
-    local add_button = FrameContainer:new{
+    -- Add reminder button using Button widget with callback
+    local reminders_module = self
+    local add_button = Button:new{
+        text = _("[+] Add New Reminder"),
+        text_font_face = "cfont",
+        text_font_size = 16,
+        text_font_bold = true,
         width = content_width,
-        height = getReminderRowHeight(),
-        padding = Size.padding.small,
         bordersize = 2,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = getReminderRowHeight() - Size.padding.small * 2},
-            TextWidget:new{
-                text = _("[+] Add New Reminder"),
-                face = Font:getFace("cfont", 16),
-                bold = true,
-            },
-        },
+        margin = 0,
+        padding = Size.padding.small,
+        radius = 0,
+        callback = function()
+            reminders_module:showAddReminder()
+        end,
     }
     table.insert(content, add_button)
 
     -- Wrap content in scrollable container
     local scrollbar_width = ScrollableContainer:getScrollbarWidth()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local scroll_height = screen_height
 
     local inner_frame = FrameContainer:new{
@@ -253,13 +261,8 @@ function Reminders:showRemindersView()
     -- Set show_parent for ScrollableContainer refresh
     self.scrollable_container.show_parent = self.reminders_widget
 
-    -- Store top_safe_zone for gesture handlers
-    self.top_safe_zone = top_safe_zone
-
-    -- Setup reminder row gesture handlers
-    self:setupGestureHandlers(content_width)
-
     -- Setup corner gesture handlers using shared helpers
+    -- Note: Row tap handling is built into Button widgets, no separate gesture setup needed
     local gesture_dims = {
         screen_width = screen_width,
         screen_height = screen_height,
@@ -275,12 +278,18 @@ end
 
 --[[--
 Build a single reminder row with toggle button.
+Uses InputContainer for proper scroll-aware tap handling and custom text colors.
 --]]
 function Reminders:buildReminderRow(reminder, content_width, time_until, is_inactive)
-    local bg_color = is_inactive and Blitbuffer.gray(0.95) or Blitbuffer.COLOR_WHITE
-    local text_color = is_inactive and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
+    local reminders_module = self
+    -- Inactive reminders get light gray background, active get white
+    local bg_color = is_inactive and Blitbuffer.gray(0.85) or Blitbuffer.COLOR_WHITE
+    -- Text color: always black for readability
+    local text_color = Blitbuffer.COLOR_BLACK
 
-    local title_width = content_width - getButtonWidth() - Size.padding.small * 3
+    -- Account for right padding to match left side
+    local right_padding = Size.padding.small
+    local title_width = content_width - getButtonWidth() - Size.padding.small * 3 - right_padding
 
     local repeat_text = self:formatRepeatDays(reminder.repeat_days)
     local time_text = reminder.time or "??:??"
@@ -290,128 +299,96 @@ function Reminders:buildReminderRow(reminder, content_width, time_until, is_inac
         display_text = string.format("%s  %s (%s)", time_text, reminder.title, time_until)
     end
 
-    local title_widget = TextWidget:new{
-        text = display_text,
-        face = Font:getFace("cfont", 14),
-        fgcolor = text_color,
-        max_width = title_width - Size.padding.small * 2,
+    -- Title - use InputContainer for custom colors since Button ignores fgcolor
+    local title_label = CenterContainer:new{
+        dimen = Geom:new{w = title_width - 6, h = getReminderRowHeight() - 10},
+        TextWidget:new{
+            text = display_text,
+            face = Font:getFace("cfont", 14),
+            fgcolor = text_color,
+            max_width = title_width - 12,
+        },
     }
 
-    -- Toggle button
+    local title_frame = FrameContainer:new{
+        width = title_width,
+        height = getReminderRowHeight() - 4,
+        padding = 2,
+        bordersize = 0,
+        background = bg_color,
+        title_label,
+    }
+
+    local title_button = InputContainer:new{
+        dimen = Geom:new{w = title_width, h = getReminderRowHeight()},
+        title_frame,
+    }
+    title_button.ges_events.Tap = {
+        GestureRange:new{
+            ges = "tap",
+            range = title_button.dimen,
+        },
+    }
+    title_button.onTap = function()
+        reminders_module:showReminderActions(reminder)
+        return true
+    end
+
+    -- Toggle button - use InputContainer for custom colors since Button ignores fgcolor
     local toggle_text = reminder.active and "ON" or "OFF"
     local toggle_bg = reminder.active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
     local toggle_fg = reminder.active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
 
-    local toggle_button = FrameContainer:new{
+    local toggle_label = CenterContainer:new{
+        dimen = Geom:new{w = getButtonWidth() - 6, h = getReminderRowHeight() - 10},
+        TextWidget:new{
+            text = toggle_text,
+            face = Font:getFace("cfont", 12),
+            fgcolor = toggle_fg,
+            bold = true,
+        },
+    }
+
+    local toggle_frame = FrameContainer:new{
         width = getButtonWidth(),
         height = getReminderRowHeight() - 4,
         padding = 2,
         bordersize = 1,
         background = toggle_bg,
-        CenterContainer:new{
-            dimen = Geom:new{w = getButtonWidth() - 6, h = getReminderRowHeight() - 10},
-            TextWidget:new{
-                text = toggle_text,
-                face = Font:getFace("cfont", 12),
-                fgcolor = toggle_fg,
-                bold = true,
-            },
+        toggle_label,
+    }
+
+    local toggle_button = InputContainer:new{
+        dimen = Geom:new{w = getButtonWidth(), h = getReminderRowHeight()},
+        toggle_frame,
+    }
+    toggle_button.ges_events.Tap = {
+        GestureRange:new{
+            ges = "tap",
+            range = toggle_button.dimen,
         },
     }
+    toggle_button.onTap = function()
+        reminders_module:toggleReminder(reminder)
+        return true
+    end
 
     local row = HorizontalGroup:new{
         align = "center",
-        FrameContainer:new{
-            width = title_width,
-            height = getReminderRowHeight(),
-            padding = Size.padding.small,
-            bordersize = 0,
-            background = bg_color,
-            title_widget,
-        },
+        title_button,
         HorizontalSpan:new{ width = Size.padding.small },
         toggle_button,
+        HorizontalSpan:new{ width = Size.padding.small },  -- Right padding
     }
 
     return FrameContainer:new{
-        width = content_width,
+        width = content_width - Size.padding.small,  -- Account for right padding
         height = getReminderRowHeight(),
         padding = 0,
         bordersize = 1,
         background = bg_color,
         row,
     }
-end
-
---[[--
-Setup gesture handlers for reminders view.
---]]
-function Reminders:setupGestureHandlers(content_width)
-    local reminders_module = self
-
-    -- NOTE: self.current_y starts at Size.padding.large, so all stored Y positions
-    -- are already in SCREEN coordinates. We do NOT need to add frame_y_offset.
-
-    -- Reminder row taps - use tracked Y positions (already screen coordinates)
-    for idx, row_info in ipairs(self.reminder_rows) do
-        local row_y = row_info.y
-        local title_width = content_width - getButtonWidth() - Size.padding.small * 3
-
-        -- Title area tap (opens menu)
-        local title_gesture = "ReminderTitle_" .. idx
-        self.reminders_widget.ges_events[title_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large,
-                    y = row_y,
-                    w = title_width,
-                    h = getReminderRowHeight(),
-                },
-            },
-        }
-        local reminder = row_info.reminder
-        self.reminders_widget["on" .. title_gesture] = function()
-            reminders_module:showReminderActions(reminder)
-            return true
-        end
-
-        -- Toggle button tap
-        local toggle_gesture = "ReminderToggle_" .. idx
-        self.reminders_widget.ges_events[toggle_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large + title_width + Size.padding.small,
-                    y = row_y,
-                    w = getButtonWidth(),
-                    h = getReminderRowHeight(),
-                },
-            },
-        }
-        self.reminders_widget["on" .. toggle_gesture] = function()
-            reminders_module:toggleReminder(reminder)
-            return true
-        end
-    end
-
-    -- Add button tap - use tracked position (already screen coordinates)
-    self.reminders_widget.ges_events.AddReminder = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = Size.padding.large,
-                y = self.add_button_y,
-                w = content_width,
-                h = getReminderRowHeight(),
-            },
-        },
-    }
-    self.reminders_widget.onAddReminder = function()
-        reminders_module:showAddReminder()
-        return true
-    end
-    -- Note: Swipe-to-close handled by UIHelpers.setupSwipeToClose in showRemindersView
 end
 
 --[[--

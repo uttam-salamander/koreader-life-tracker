@@ -128,6 +128,97 @@ function MoodGraphWidget:paintTo(bb, x, y)
 end
 
 --[[--
+Custom widget for drawing spider/radar chart using Blitbuffer.
+Shows category performance as a polygon on radial axes.
+--]]
+local SpiderGraphWidget = Widget:extend{
+    width = nil,
+    height = nil,
+    data = nil,      -- Array of {label = string, value = 0-1}
+    num_rings = 4,   -- Number of concentric grid rings
+    show_labels = true,
+}
+
+function SpiderGraphWidget:init()
+    self.dimen = Geom:new{w = self.width, h = self.height}
+end
+
+function SpiderGraphWidget:paintTo(bb, x, y)
+    local num_axes = #self.data
+    if num_axes < 3 then return end  -- Need at least 3 axes for spider chart
+
+    local center_x = x + self.width / 2
+    local center_y = y + self.height / 2
+    local max_radius = math.min(self.width, self.height) / 2 - 25  -- Leave room for labels
+
+    -- Helper to draw a line using rectangles
+    local function drawLine(x1, y1, x2, y2, color, thickness)
+        thickness = thickness or 1
+        local dx = x2 - x1
+        local dy = y2 - y1
+        local steps = math.max(math.abs(dx), math.abs(dy))
+        if steps == 0 then steps = 1 end
+        for step = 0, steps do
+            local lx = Math.round(x1 + dx * step / steps)
+            local ly = Math.round(y1 + dy * step / steps)
+            bb:paintRect(lx, ly - thickness/2, 1, thickness, color)
+        end
+    end
+
+    -- Helper to get vertex position on the spider chart
+    local function getVertex(axis_idx, radius)
+        -- Start from top (-90 degrees), go clockwise
+        local angle = -math.pi/2 + (axis_idx - 1) * 2 * math.pi / num_axes
+        local vx = center_x + radius * math.cos(angle)
+        local vy = center_y + radius * math.sin(angle)
+        return Math.round(vx), Math.round(vy)
+    end
+
+    -- Draw concentric grid rings (polygons)
+    for ring = 1, self.num_rings do
+        local ring_radius = max_radius * ring / self.num_rings
+        for axis = 1, num_axes do
+            local x1, y1 = getVertex(axis, ring_radius)
+            local x2, y2 = getVertex(axis % num_axes + 1, ring_radius)
+            drawLine(x1, y1, x2, y2, Blitbuffer.COLOR_LIGHT_GRAY, 1)
+        end
+    end
+
+    -- Draw radial axis lines from center to each vertex
+    for axis = 1, num_axes do
+        local vx, vy = getVertex(axis, max_radius)
+        drawLine(center_x, center_y, vx, vy, Blitbuffer.COLOR_LIGHT_GRAY, 1)
+    end
+
+    -- Draw data polygon
+    local data_points = {}
+    for axis, item in ipairs(self.data) do
+        local radius = max_radius * (item.value or 0)
+        local vx, vy = getVertex(axis, radius)
+        table.insert(data_points, {x = vx, y = vy})
+    end
+
+    -- Draw filled data polygon lines (thicker for visibility)
+    for i = 1, #data_points do
+        local p1 = data_points[i]
+        local p2 = data_points[i % #data_points + 1]
+        drawLine(p1.x, p1.y, p2.x, p2.y, Blitbuffer.COLOR_BLACK, 2)
+    end
+
+    -- Draw data points as dots
+    local dot_radius = 4
+    for _, p in ipairs(data_points) do
+        for dy = -dot_radius, dot_radius do
+            local dx = Math.round(math.sqrt(dot_radius * dot_radius - dy * dy))
+            bb:paintRect(p.x - dx, p.y + dy, dx * 2 + 1, 1, Blitbuffer.COLOR_BLACK)
+        end
+    end
+
+    -- Draw center dot
+    bb:paintRect(center_x - 2, center_y - 2, 5, 5, Blitbuffer.COLOR_BLACK)
+end
+
+--[[--
 Show the journal view.
 --]]
 function Journal:show(ui)
@@ -357,9 +448,38 @@ function Journal:showJournalView()
     })
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
-    local spider_widgets = self:buildCategorySpiderChart(content_width)
-    for _, widget in ipairs(spider_widgets) do
-        table.insert(content, widget)
+    -- Build spider chart data
+    local spider_data = self:getCategoryPerformanceData()
+    if #spider_data >= 3 then
+        -- Create pixel-based spider chart
+        local spider_size = Screen:scaleBySize(120)
+        local spider_chart = SpiderGraphWidget:new{
+            width = content_width,
+            height = spider_size,
+            data = spider_data,
+            num_rings = 4,
+        }
+        table.insert(content, spider_chart)
+
+        -- Add labels below the chart
+        local label_row = HorizontalGroup:new{align = "center"}
+        local label_width = math.floor(content_width / #spider_data)
+        for _, item in ipairs(spider_data) do
+            table.insert(label_row, CenterContainer:new{
+                dimen = Geom:new{w = label_width, h = 20},
+                TextWidget:new{
+                    text = string.format("%s %d%%", item.label:sub(1,6), Math.round(item.value * 100)),
+                    face = Font:getFace("cfont", 10),
+                },
+            })
+        end
+        table.insert(content, label_row)
+    else
+        -- Fall back to simple bars if fewer than 3 categories
+        local bar_widgets = self:buildCategorySpiderChart(content_width)
+        for _, widget in ipairs(bar_widgets) do
+            table.insert(content, widget)
+        end
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
@@ -395,7 +515,7 @@ function Journal:showJournalView()
 
     -- Wrap content in scrollable container
     local scrollbar_width = ScrollableContainer:getScrollbarWidth()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local scroll_height = screen_height
 
     local inner_frame = FrameContainer:new{
@@ -1060,6 +1180,47 @@ Keep going!
         text = summary,
         width = Screen:getWidth() - 40,
     })
+end
+
+--[[--
+Get category performance data for spider chart.
+@return table Array of {label = string, value = 0-1}
+--]]
+function Journal:getCategoryPerformanceData()
+    local quests = Data:loadAllQuests()
+    local settings = Data:loadUserSettings()
+    local categories = settings.quest_categories or {"Health", "Work", "Personal", "Learning"}
+    local today = os.date("%Y-%m-%d")
+
+    -- Calculate completion rate per category
+    local category_stats = {}
+    for _, cat in ipairs(categories) do
+        category_stats[cat] = { completed = 0, total = 0 }
+    end
+
+    -- Count quests per category
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type] or {}) do
+            local cat = quest.category or "None"
+            if category_stats[cat] then
+                category_stats[cat].total = category_stats[cat].total + 1
+                if quest.completed and quest.completed_date == today then
+                    category_stats[cat].completed = category_stats[cat].completed + 1
+                end
+            end
+        end
+    end
+
+    -- Build data array (only categories with quests)
+    local data = {}
+    for _, cat in ipairs(categories) do
+        if category_stats[cat] and category_stats[cat].total > 0 then
+            local rate = category_stats[cat].completed / category_stats[cat].total
+            table.insert(data, { label = cat, value = rate })
+        end
+    end
+
+    return data
 end
 
 --[[--

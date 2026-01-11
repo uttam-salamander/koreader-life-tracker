@@ -584,7 +584,7 @@ function Read:showReadView()
     local screen_height = Screen:getHeight()
 
     -- Calculate dimensions
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local scroll_height = screen_height
     local content_width = scroll_width - Size.padding.large * 3
 

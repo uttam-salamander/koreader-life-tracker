@@ -102,7 +102,7 @@ function Settings:showSettingsView()
     local user_settings = Data:loadUserSettings()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local content_width = scroll_width - Size.padding.large * 3
     local button_width = content_width
 

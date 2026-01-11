@@ -412,7 +412,7 @@ function Dashboard:showDashboardView()
     -- ===== Wrap content in scrollable container =====
     -- Calculate visible scroll area (account for scrollbar)
     local scrollbar_width = ScrollableContainer:getScrollbarWidth()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local scroll_height = screen_height
 
     -- Wrap content in a frame with padding and minimum height to fill viewport

@@ -312,7 +312,7 @@ function Timeline:showTimelineView()
 
     -- Wrap content in scrollable container
     local scrollbar_width = ScrollableContainer:getScrollbarWidth()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
     local scroll_height = screen_height
 
     local inner_frame = FrameContainer:new{
