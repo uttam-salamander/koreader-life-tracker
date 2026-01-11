@@ -231,6 +231,10 @@ function Data:loadUserSettings()
             today_energy = s:readSetting("today_energy"),
             today_date = s:readSetting("today_date"),
             lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
+            sleep_screen_enabled = s:readSetting("sleep_screen_enabled") or false,
+            large_touch_targets = s:readSetting("large_touch_targets") or false,
+            high_contrast = s:readSetting("high_contrast") or false,
+            celebration = s:readSetting("celebration"),
             quotes = quotes,
         }
     end)
@@ -251,6 +255,10 @@ function Data:saveUserSettings(user_settings)
     s:saveSetting("today_energy", user_settings.today_energy)
     s:saveSetting("today_date", user_settings.today_date)
     s:saveSetting("lock_screen_dashboard", user_settings.lock_screen_dashboard)
+    s:saveSetting("sleep_screen_enabled", user_settings.sleep_screen_enabled)
+    s:saveSetting("large_touch_targets", user_settings.large_touch_targets)
+    s:saveSetting("high_contrast", user_settings.high_contrast)
+    s:saveSetting("celebration", user_settings.celebration)
     s:saveSetting("quotes", user_settings.quotes)
     s:flush()
 end

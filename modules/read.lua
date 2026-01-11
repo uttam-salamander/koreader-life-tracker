@@ -460,7 +460,7 @@ function Read:createStatsOverview(content_width)
     local muted_color = UIConfig:color("muted")
     local bg_color = UIConfig:color("background")
 
-    local half_width = math.floor((content_width - card_spacing) / 2)
+    -- Note: half_width calculation moved to after outer padding/border accounting
 
     -- Helper to create period stats
     local function createPeriodStats(title, pages, time)
@@ -487,28 +487,35 @@ function Read:createStatsOverview(content_width)
     local left_stats = createPeriodStats("Today", today_pages, today_time)
     local right_stats = createPeriodStats("This Week", week_pages, week_time)
 
+    -- Calculate card widths to match book stats row styling
+    -- Account for outer padding and border that book stats row has
+    local outer_padding = UIConfig:spacing("sm")
+    local outer_border = UIConfig:dim("border_thin")
+    local inner_content_width = content_width - (outer_padding * 2) - (outer_border * 2)
+    local card_width = math.floor((inner_content_width - card_spacing) / 2)
+
     local stats_row = HorizontalGroup:new{align = "top"}
     table.insert(stats_row, FrameContainer:new{
-        width = half_width,
-        padding = UIConfig:spacing("sm"),
-        bordersize = UIConfig:dim("border_thin"),
+        width = card_width,
+        padding = 0,
+        bordersize = 0,
         background = bg_color,
         left_stats,
     })
     table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
     table.insert(stats_row, FrameContainer:new{
-        width = half_width,
-        padding = UIConfig:spacing("sm"),
-        bordersize = UIConfig:dim("border_thin"),
+        width = card_width,
+        padding = 0,
+        bordersize = 0,
         background = bg_color,
         right_stats,
     })
 
-    -- Wrap in FrameContainer to match first row width
+    -- Wrap in FrameContainer with same styling as book stats row
     return FrameContainer:new{
         width = content_width,
-        padding = 0,
-        bordersize = 0,
+        padding = outer_padding,
+        bordersize = outer_border,
         background = bg_color,
         stats_row,
     }

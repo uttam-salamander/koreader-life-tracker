@@ -1,150 +1,379 @@
 --[[--
 Settings module for Life Tracker.
 Manages user preferences for energy categories, time slots, and display options.
+Displays as a full-page view (not a popup) to avoid stacking issues.
 
 @module lifetracker.settings
 --]]
 
+local Blitbuffer = require("ffi/blitbuffer")
+local Button = require("ui/widget/button")
 local ButtonDialog = require("ui/widget/buttondialog")
 local ConfirmBox = require("ui/widget/confirmbox")
+local Device = require("device")
+local FrameContainer = require("ui/widget/container/framecontainer")
+local Geom = require("ui/geometry")
+-- HorizontalGroup available if needed for future layouts
+local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local InfoMessage = require("ui/widget/infomessage")
+local LineWidget = require("ui/widget/linewidget")
 local Menu = require("ui/widget/menu")
+local OverlapGroup = require("ui/widget/overlapgroup")
+local RightContainer = require("ui/widget/container/rightcontainer")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
+local Size = require("ui/size")
+local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
+local VerticalGroup = require("ui/widget/verticalgroup")
+local VerticalSpan = require("ui/widget/verticalspan")
+local Screen = Device.screen
 local _ = require("gettext")
 
 local Celebration = require("modules/celebration")
 local Data = require("modules/data")
+local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
+local UIHelpers = require("modules/ui_helpers")
 
 local Settings = {}
 
+-- Row height for settings items
+local function getRowHeight()
+    return UIConfig:dim("touch_target_height")
+end
+
 --[[--
-Show the settings menu.
+Create a settings row with label and optional value/status.
+@tparam string label The setting label
+@tparam string|nil value Optional value to display on the right
+@tparam boolean|nil is_checked Optional checked state for toggles
+@tparam function callback Function to call when tapped
+@tparam number width Available width
+@treturn Widget The settings row widget
+--]]
+function Settings:createSettingsRow(label, _value, _is_checked, callback, width)
+    -- Create a button that spans the full width
+    return Button:new{
+        text = label,
+        width = width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = 0,
+        padding = Size.padding.default,
+        bordersize = 0,
+        callback = callback,
+    }
+end
+
+--[[--
+Create a section header.
+@tparam string title Section title
+@tparam number width Available width
+@treturn Widget Section header widget
+--]]
+function Settings:createSectionHeader(title, width)
+    local content = VerticalGroup:new{align = "left"}
+
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("md")})
+    table.insert(content, TextWidget:new{
+        text = title,
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("section_header")),
+        fgcolor = UIConfig:color("foreground"),
+        bold = true,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{w = width, h = 1},
+        background = UIConfig:color("muted"),
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("sm")})
+
+    return content
+end
+
+--[[--
+Show the settings page as a full-screen view.
 @tparam table ui The UI manager reference
 --]]
 function Settings:show(ui)
     self.ui = ui
-    local user_settings = Data:loadUserSettings()
+    self:showSettingsView()
+end
 
-    local menu
-    menu = Menu:new{
-        title = _("Life Tracker Settings"),
-        item_table = {
-            {
-                text = _("Open Dashboard"),
-                callback = function()
-                    UIManager:close(menu)
-                    local Dashboard = require("modules/dashboard")
-                    Dashboard:show(ui)
-                end,
-                help_text = _("Go to the Life Tracker dashboard"),
-            },
-            {
-                text = _("Energy Categories"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:showEnergyCategoriesMenu(ui, user_settings)
-                end,
-                help_text = _("Customize your energy level options"),
-            },
-            {
-                text = _("Time Slots"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:showTimeSlotsMenu(ui, user_settings)
-                end,
-                help_text = _("Customize time of day categories"),
-            },
-            {
-                text = _("Lock Screen Dashboard"),
-                checked_func = function()
-                    return user_settings.lock_screen_dashboard == true
-                end,
-                callback = function()
-                    user_settings.lock_screen_dashboard = not user_settings.lock_screen_dashboard
-                    Data:saveUserSettings(user_settings)
-                    UIManager:close(menu)
-                    self:show(ui)
-                end,
-                help_text = _("Show dashboard when device wakes from sleep"),
-            },
-            {
-                text = _("Large Touch Targets"),
-                checked_func = function()
-                    return user_settings.large_touch_targets == true
-                end,
-                callback = function()
-                    user_settings.large_touch_targets = not user_settings.large_touch_targets
-                    Data:saveUserSettings(user_settings)
-                    -- Invalidate UIConfig dimensions to apply changes
-                    UIConfig:invalidateDimensions()
-                    UIManager:close(menu)
-                    self:show(ui)
-                end,
-                help_text = _("Increase button sizes for easier tapping"),
-            },
-            {
-                text = _("High Contrast Mode"),
-                checked_func = function()
-                    return user_settings.high_contrast == true
-                end,
-                callback = function()
-                    user_settings.high_contrast = not user_settings.high_contrast
-                    Data:saveUserSettings(user_settings)
-                    -- Update color scheme
-                    UIConfig:updateColorScheme()
-                    UIManager:close(menu)
-                    self:show(ui)
-                end,
-                help_text = _("Use stronger contrast for better visibility"),
-            },
-            {
-                text = _("Daily Quotes"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:showQuotesMenu(ui, user_settings)
-                end,
-                help_text = _("Manage inspirational quotes shown on dashboard"),
-            },
-            {
-                text = _("Celebration Animations"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:showCelebrationMenu(ui)
-                end,
-                help_text = _("Configure quest completion animations"),
-            },
-            {
-                text = _("Backup Data"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:createBackup(ui)
-                end,
-                help_text = _("Export all data to a backup file"),
-            },
-            {
-                text = _("Restore Data"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:showRestoreMenu(ui)
-                end,
-                help_text = _("Restore data from a backup file"),
-            },
-            {
-                text = _("Reset All Data"),
-                callback = function()
-                    UIManager:close(menu)
-                    self:confirmResetData(ui)
-                end,
-                help_text = _("Delete all quests, reminders, and logs"),
-            },
-        },
-        close_callback = function()
-            UIManager:close(menu)
+--[[--
+Build and display the settings view.
+--]]
+function Settings:showSettingsView()
+    local user_settings = Data:loadUserSettings()
+    local screen_width = Screen:getWidth()
+    local screen_height = Screen:getHeight()
+    local scroll_width = screen_width - Navigation.TAB_WIDTH
+    local content_width = scroll_width - Size.padding.large * 3
+    local button_width = content_width
+
+    local content = VerticalGroup:new{align = "left"}
+
+    -- Page title
+    table.insert(content, TextWidget:new{
+        text = _("Settings"),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
+        fgcolor = UIConfig:color("foreground"),
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("lg")})
+
+    -- ===== Customization Section =====
+    table.insert(content, self:createSectionHeader(_("Customization"), content_width))
+
+    table.insert(content, Button:new{
+        text = _("Energy Categories"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showEnergyCategoriesMenu(self.ui, user_settings)
         end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    table.insert(content, Button:new{
+        text = _("Time Slots"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showTimeSlotsMenu(self.ui, user_settings)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    table.insert(content, Button:new{
+        text = _("Daily Quotes"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showQuotesMenu(self.ui, user_settings)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    table.insert(content, Button:new{
+        text = _("Celebration Animations"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showCelebrationMenu(self.ui)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    -- ===== Display Section =====
+    table.insert(content, self:createSectionHeader(_("Display"), content_width))
+
+    -- Sleep Screen Dashboard toggle
+    local sleep_enabled = user_settings.sleep_screen_enabled == true
+    table.insert(content, Button:new{
+        text = sleep_enabled and _("Sleep Screen Dashboard [ON]") or _("Sleep Screen Dashboard [OFF]"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        preselect = sleep_enabled,
+        callback = function()
+            local currently_enabled = user_settings.sleep_screen_enabled == true
+            local action_text = currently_enabled
+                and _("Disable Sleep Screen Dashboard?")
+                or _("Enable Sleep Screen Dashboard?")
+            local description = currently_enabled
+                and _("The default KOReader screensaver will be used when device sleeps.")
+                or _("Life Tracker dashboard will be shown when device sleeps.")
+
+            UIManager:show(ConfirmBox:new{
+                text = action_text .. "\n\n" .. description,
+                ok_text = currently_enabled and _("Disable") or _("Enable"),
+                cancel_text = _("Cancel"),
+                ok_callback = function()
+                    user_settings.sleep_screen_enabled = not currently_enabled
+                    Data:saveUserSettings(user_settings)
+                    UIManager:close(self.settings_widget)
+                    self:showSettingsView()
+                end,
+            })
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    -- Large Touch Targets toggle
+    local large_targets = user_settings.large_touch_targets == true
+    table.insert(content, Button:new{
+        text = large_targets and _("Large Touch Targets [ON]") or _("Large Touch Targets [OFF]"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        preselect = large_targets,
+        callback = function()
+            user_settings.large_touch_targets = not user_settings.large_touch_targets
+            Data:saveUserSettings(user_settings)
+            UIConfig:invalidateDimensions()
+            UIManager:close(self.settings_widget)
+            self:showSettingsView()
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    -- High Contrast Mode toggle
+    local high_contrast = user_settings.high_contrast == true
+    table.insert(content, Button:new{
+        text = high_contrast and _("High Contrast Mode [ON]") or _("High Contrast Mode [OFF]"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        preselect = high_contrast,
+        callback = function()
+            user_settings.high_contrast = not user_settings.high_contrast
+            Data:saveUserSettings(user_settings)
+            UIConfig:updateColorScheme()
+            UIManager:close(self.settings_widget)
+            self:showSettingsView()
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    -- ===== Data Section =====
+    table.insert(content, self:createSectionHeader(_("Data"), content_width))
+
+    table.insert(content, Button:new{
+        text = _("Backup Data"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:createBackup(self.ui)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    table.insert(content, Button:new{
+        text = _("Restore Data"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showRestoreMenu(self.ui)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    table.insert(content, Button:new{
+        text = _("Reset All Data"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:confirmResetData(self.ui)
+        end,
+    })
+
+    -- Bottom padding
+    table.insert(content, VerticalSpan:new{width = Size.padding.large * 2})
+
+    -- Wrap content in scrollable frame
+    local scrollbar_width = ScrollableContainer:getScrollbarWidth()
+    local inner_frame = FrameContainer:new{
+        width = scroll_width - scrollbar_width,
+        height = math.max(screen_height, content:getSize().h + Size.padding.large * 2),
+        padding = Size.padding.large,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        content,
     }
-    UIManager:show(menu)
+
+    local scrollable = ScrollableContainer:new{
+        dimen = Geom:new{w = scroll_width, h = screen_height},
+        inner_frame,
+    }
+    self.scrollable_container = scrollable
+
+    -- Tab change callback
+    local ui = self.ui
+    local settings = self
+    local function on_tab_change(tab_id)
+        UIManager:close(settings.settings_widget)
+        Navigation:navigateTo(tab_id, ui)
+    end
+
+    -- Build navigation tabs (settings not in nav, but we still show tabs)
+    local tabs = Navigation:buildTabColumn(nil, screen_height)  -- nil = no active tab
+    Navigation.on_tab_change = on_tab_change
+
+    -- Main layout
+    local main_layout = OverlapGroup:new{
+        dimen = Geom:new{w = screen_width, h = screen_height},
+        scrollable,
+        RightContainer:new{
+            dimen = Geom:new{w = screen_width, h = screen_height},
+            tabs,
+        },
+    }
+
+    -- Create widget with gestures
+    self.settings_widget = InputContainer:new{
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = screen_width,
+            h = screen_height,
+        },
+        ges_events = {},
+        main_layout,
+    }
+
+    -- Set show_parent for ScrollableContainer
+    self.scrollable_container.show_parent = self.settings_widget
+
+    -- Setup corner gestures
+    local gesture_dims = {
+        screen_width = screen_width,
+        screen_height = screen_height,
+        top_safe_zone = UIConfig:getTopSafeZone(),
+    }
+    UIHelpers.setupCornerGestures(self.settings_widget, self, gesture_dims)
+
+    -- Setup swipe-to-close
+    UIHelpers.setupSwipeToClose(self.settings_widget, function()
+        UIManager:close(self.settings_widget)
+    end, gesture_dims)
+
+    UIManager:show(self.settings_widget)
+end
+
+--[[--
+Dispatch corner gesture to UI.
+Required by UIHelpers.setupCornerGestures.
+--]]
+function Settings:dispatchCornerGesture(gesture_name)
+    UIHelpers.dispatchCornerGesture(self.ui, gesture_name)
 end
 
 --[[--
@@ -177,7 +406,6 @@ function Settings:showEnergyCategoriesMenu(ui, user_settings)
         item_table = items,
         close_callback = function()
             UIManager:close(menu)
-            self:show(ui)
         end,
     }
     UIManager:show(menu)
@@ -337,7 +565,6 @@ function Settings:showTimeSlotsMenu(ui, user_settings)
         item_table = items,
         close_callback = function()
             UIManager:close(menu)
-            self:show(ui)
         end,
     }
     UIManager:show(menu)
@@ -510,7 +737,6 @@ function Settings:showQuotesMenu(ui, user_settings)
         item_table = items,
         close_callback = function()
             UIManager:close(menu)
-            self:show(ui)
         end,
     }
     UIManager:show(menu)
@@ -660,6 +886,7 @@ function Settings:showCelebrationMenu(ui)
     local settings = Celebration:getSettings()
     local animations = Celebration:getAnimationList()
 
+    local menu  -- Declare early for closure access
     local items = {}
 
     -- Enable/disable toggle
@@ -672,6 +899,7 @@ function Settings:showCelebrationMenu(ui)
                 text = settings.enabled and _("Celebrations enabled") or _("Celebrations disabled"),
                 timeout = 2,
             })
+            UIManager:close(menu)
             self:showCelebrationMenu(ui)
         end,
     })
@@ -681,6 +909,7 @@ function Settings:showCelebrationMenu(ui)
     table.insert(items, {
         text = _("Animation: ") .. current_anim,
         callback = function()
+            UIManager:close(menu)
             self:showAnimationSelector(ui, settings, animations)
         end,
     })
@@ -696,6 +925,7 @@ function Settings:showCelebrationMenu(ui)
     table.insert(items, {
         text = _("Speed: ") .. current_speed,
         callback = function()
+            UIManager:close(menu)
             self:showSpeedSelector(ui, settings)
         end,
     })
@@ -704,6 +934,7 @@ function Settings:showCelebrationMenu(ui)
     table.insert(items, {
         text = string.format(_("Duration: %.1f seconds"), settings.timeout),
         callback = function()
+            UIManager:close(menu)
             self:showDurationSelector(ui, settings)
         end,
     })
@@ -718,13 +949,11 @@ function Settings:showCelebrationMenu(ui)
         })
     end
 
-    local menu
     menu = Menu:new{
         title = _("Celebration Animations"),
         item_table = items,
         close_callback = function()
             UIManager:close(menu)
-            self:show(ui)
         end,
     }
     UIManager:show(menu)
@@ -751,7 +980,7 @@ function Settings:showAnimationSelector(ui, settings, animations)
     })
 
     -- List each animation
-    for _idx, anim in ipairs(animations) do
+    for _, anim in ipairs(animations) do
         local is_selected = settings.selected_animation == anim.filename
         table.insert(items, {
             text = is_selected and (anim.display_name .. _(" (selected)")) or anim.display_name,
@@ -791,7 +1020,7 @@ function Settings:showSpeedSelector(ui, settings)
     }
 
     local items = {}
-    for _idx, speed in ipairs(speeds) do
+    for _, speed in ipairs(speeds) do
         local is_selected = math.abs(settings.frame_delay - speed.delay) < 0.01
         table.insert(items, {
             text = is_selected and (speed.label .. _(" (selected)")) or speed.label,
@@ -832,7 +1061,7 @@ function Settings:showDurationSelector(ui, settings)
     }
 
     local items = {}
-    for _idx, dur in ipairs(durations) do
+    for _, dur in ipairs(durations) do
         local is_selected = math.abs(settings.timeout - dur.time) < 0.1
         table.insert(items, {
             text = is_selected and (dur.label .. _(" (selected)")) or dur.label,
@@ -867,7 +1096,7 @@ end
 --[[--
 Create a backup of all plugin data.
 --]]
-function Settings:createBackup(ui)
+function Settings:createBackup(_ui)
     local ok, result = Data:exportBackupToFile()
 
     if ok then
@@ -884,7 +1113,6 @@ function Settings:createBackup(ui)
             timeout = 5,
         })
     end
-    self:show(ui)
 end
 
 --[[--
@@ -898,7 +1126,6 @@ function Settings:showRestoreMenu(ui)
             text = _("No backups found.\n\nCreate a backup first using 'Backup Data'."),
             timeout = 4,
         })
-        self:show(ui)
         return
     end
 
@@ -906,7 +1133,7 @@ function Settings:showRestoreMenu(ui)
     local menu
     local navigating_away = false  -- Flag to prevent close_callback from showing settings
 
-    for _idx, backup in ipairs(backups) do
+    for _, backup in ipairs(backups) do
         -- Format size in KB
         local size_kb = string.format("%.1f KB", (backup.size or 0) / 1024)
         table.insert(items, {
@@ -929,9 +1156,6 @@ function Settings:showRestoreMenu(ui)
         item_table = items,
         close_callback = function()
             UIManager:close(menu)
-            if not navigating_away then
-                self:show(ui)
-            end
         end,
     }
     UIManager:show(menu)
@@ -986,13 +1210,17 @@ function Settings:confirmRestore(ui, backup)
                     text = _("Data restored successfully!"),
                     timeout = 3,
                 })
+                -- Refresh settings view
+                if self.settings_widget then
+                    UIManager:close(self.settings_widget)
+                    self:showSettingsView()
+                end
             else
                 UIManager:show(InfoMessage:new{
                     text = _("Restore failed: ") .. (result or "Unknown error"),
                     timeout = 5,
                 })
             end
-            self:show(ui)
         end,
         cancel_callback = function()
             self:showRestoreMenu(ui)
@@ -1032,7 +1260,7 @@ end
 --[[--
 Confirm and reset all plugin data.
 --]]
-function Settings:confirmResetData(ui)
+function Settings:confirmResetData(_ui)
     local dialog
     dialog = ButtonDialog:new{
         title = _("Reset All Data?"),
@@ -1041,7 +1269,6 @@ function Settings:confirmResetData(ui)
                 text = _("Cancel"),
                 callback = function()
                     UIManager:close(dialog)
-                    self:show(ui)
                 end,
             }},
             {{
@@ -1064,6 +1291,11 @@ function Settings:confirmResetData(ui)
                         text = _("All data has been reset"),
                         timeout = 3,
                     })
+                    -- Refresh settings view
+                    if self.settings_widget then
+                        UIManager:close(self.settings_widget)
+                        self:showSettingsView()
+                    end
                 end,
             }},
         },

@@ -21,7 +21,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local _ = require("gettext")
 
 -- Plugin modules (lazy loaded)
-local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingStats, Read, UIConfig
+local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingStats, Read, UIConfig, SleepScreen
 
 local LifeTracker = WidgetContainer:extend{
     name = "lifetracker",
@@ -259,28 +259,39 @@ function LifeTracker:checkReminders()
     end
 end
 
+-- Lazy load SleepScreen module
+function LifeTracker:getSleepScreen()
+    if not SleepScreen then
+        SleepScreen = require("modules/sleep_screen")
+    end
+    return SleepScreen
+end
+
 --[[--
 Handle suspend event (device going to sleep).
 KOReader calls this automatically on WidgetContainer plugins.
+Shows Life Tracker dashboard as sleep screen if enabled.
 --]]
 function LifeTracker:onSuspend()
     -- Log reading stats before suspend
     self:getReadingStats():logCurrentStats(self.ui)
+
+    -- Show sleep screen if enabled
+    local sleep_screen = self:getSleepScreen()
+    if sleep_screen:isEnabled() then
+        sleep_screen:show()
+    end
 end
 
 --[[--
 Handle resume event (device waking up).
 KOReader calls this automatically on WidgetContainer plugins.
-Shows dashboard as wake screen if enabled.
+Closes sleep screen if it was showing.
 --]]
 function LifeTracker:onResume()
-    local settings = self:getData():loadUserSettings()
-    if settings and settings.lock_screen_dashboard then
-        -- Small delay to let KOReader finish resuming
-        UIManager:scheduleIn(0.5, function()
-            self:showDashboard()
-        end)
-    end
+    -- Close sleep screen if it was showing
+    local sleep_screen = self:getSleepScreen()
+    sleep_screen:close()
 end
 
 --[[--
