@@ -7,7 +7,6 @@ Mood tracking, weekly review, and insights with reading correlation.
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
 local Device = require("device")
-local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -30,36 +29,9 @@ local _ = require("gettext")
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
+local UIHelpers = require("modules/ui_helpers")
 
 local Journal = {}
-
---[[--
-Dispatch a corner gesture to the user's configured action.
-@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
-@treturn bool True if gesture was handled
---]]
-function Journal:dispatchCornerGesture(gesture_name)
-    if self.ui and self.ui.gestures then
-        local gesture_manager = self.ui.gestures
-        local settings = gesture_manager.gestures or {}
-        local action = settings[gesture_name]
-        if action then
-            local Dispatcher = require("dispatcher")
-            Dispatcher:execute(action)
-            return true
-        end
-    end
-
-    if gesture_name == "tap_top_right_corner" then
-        self.ui:handleEvent(Event:new("ToggleFrontlight"))
-        return true
-    elseif gesture_name == "tap_top_left_corner" then
-        self.ui:handleEvent(Event:new("ToggleBookmark"))
-        return true
-    end
-
-    return false
-end
 
 --[[--
 Show the journal view.
@@ -77,8 +49,8 @@ function Journal:showJournalView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- KOReader reserves top 1/8 (12.5%) for menu gesture
-    local top_safe_zone = math.floor(screen_height / 8)
+    -- KOReader reserves top ~10% for menu gesture
+    local top_safe_zone = UIConfig:getTopSafeZone()
 
     local content = VerticalGroup:new{ align = "left" }
 
@@ -142,7 +114,7 @@ function Journal:showJournalView()
     -- Monospace font at size 11 is approximately 7 pixels per character
     local char_width = math.floor(content_width / 7)
     local graph_widgets = self:renderMoodLineGraph(mood_data, energy_categories, char_width)
-    for __, widget in ipairs(graph_widgets) do
+    for _idx, widget in ipairs(graph_widgets) do
         table.insert(content, widget)
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
@@ -179,10 +151,11 @@ function Journal:showJournalView()
         table.insert(content, VerticalSpan:new{ width = Size.padding.small })
     end
 
-    -- Edit Notes Button
+    -- Edit/Add Notes Button
     local journal_self = self
+    local has_notes = persistent_notes and persistent_notes ~= ""
     local notes_button = Button:new{
-        text = persistent_notes and "Edit Notes" or "Add Notes",
+        text = has_notes and "Edit Notes" or "Add Notes",
         callback = function()
             journal_self:showEditPersistentNotes()
         end,
@@ -252,7 +225,7 @@ function Journal:showJournalView()
     table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
     local spider_widgets = self:buildCategorySpiderChart(content_width)
-    for __, widget in ipairs(spider_widgets) do
+    for _idx, widget in ipairs(spider_widgets) do
         table.insert(content, widget)
     end
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
@@ -345,73 +318,18 @@ function Journal:showJournalView()
     -- Set show_parent for ScrollableContainer refresh
     self.scrollable_container.show_parent = self.journal_widget
 
-    -- KOReader gesture zone dimensions
-    local corner_size = math.floor(screen_width / 8)
-    local corner_height = math.floor(screen_height / 8)
-
-    -- Top CENTER zone - Opens KOReader menu
-    self.journal_widget.ges_events.TopCenterTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = corner_size,
-                y = 0,
-                w = screen_width - corner_size * 2,
-                h = top_safe_zone,
-            },
-        },
+    -- Setup corner gesture handlers using shared helpers
+    local gesture_dims = {
+        screen_width = screen_width,
+        screen_height = screen_height,
+        top_safe_zone = top_safe_zone,
     }
-    self.journal_widget.onTopCenterTap = function()
-        if self.ui and self.ui.menu then
-            self.ui.menu:onShowMenu()
-        else
-            self.ui:handleEvent(Event:new("ShowReaderMenu"))
-        end
-        return true
-    end
+    UIHelpers.setupCornerGestures(self.journal_widget, self, gesture_dims)
+    UIHelpers.setupSwipeToClose(self.journal_widget, function()
+        UIManager:close(self.journal_widget)
+    end, gesture_dims)
 
-    -- Corner tap handlers
-    self.journal_widget.ges_events.TopLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.journal_widget.onTopLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_left_corner")
-    end
-
-    self.journal_widget.ges_events.TopRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.journal_widget.onTopRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_right_corner")
-    end
-
-    self.journal_widget.ges_events.BottomLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.journal_widget.onBottomLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_left_corner")
-    end
-
-    self.journal_widget.ges_events.BottomRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.journal_widget.onBottomRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_right_corner")
-    end
-
-    -- Tap anywhere in content area (below top zone) to show menu
+    -- Tap anywhere in content area (below top zone) to show actions menu
     self.journal_widget.ges_events.Tap = {
         GestureRange:new{
             ges = "tap",
@@ -426,26 +344,6 @@ function Journal:showJournalView()
     self.journal_widget.onTap = function()
         self:showActions()
         return true
-    end
-
-    -- Swipe gestures (leave top 1/8 for KOReader menu)
-    self.journal_widget.ges_events.Swipe = {
-        GestureRange:new{
-            ges = "swipe",
-            range = Geom:new{
-                x = 0,
-                y = top_safe_zone,
-                w = screen_width - Navigation.TAB_WIDTH,
-                h = screen_height - top_safe_zone,
-            },
-        },
-    }
-    self.journal_widget.onSwipe = function(_, _, ges)
-        if ges.direction == "east" then
-            UIManager:close(self.journal_widget)
-            return true
-        end
-        return false
     end
 
     UIManager:show(self.journal_widget)
@@ -576,13 +474,13 @@ function Journal:getWeeklyMood()
 
         -- Initialize slots for this day
         local slot_scores = {}
-        for __, slot in ipairs(time_slots) do
+        for _idx, slot in ipairs(time_slots) do
             slot_scores[slot] = nil  -- No data yet
         end
 
         -- Get mood entries and map to time slots
         local entries = day_data and day_data.energy_entries or {}
-        for __, entry in ipairs(entries) do
+        for _idx, entry in ipairs(entries) do
             local slot = entry.time_slot or Data:hourToTimeSlot(entry.hour, time_slots)
             local entry_score = energy_scores[entry.energy] or 0
             -- Keep the latest entry for each slot
@@ -593,7 +491,7 @@ function Journal:getWeeklyMood()
         if #entries == 0 and day_data and day_data.energy_level then
             local score = energy_scores[day_data.energy_level] or 0
             -- Apply to all slots as fallback
-            for __, slot in ipairs(time_slots) do
+            for _idx, slot in ipairs(time_slots) do
                 slot_scores[slot] = score
             end
         end
@@ -609,8 +507,8 @@ function Journal:getWeeklyMood()
 end
 
 --[[--
-Render a text-based line graph for weekly mood with time slot breakdown.
-Each day is divided into time slots (Morning, Afternoon, Evening, Night).
+Render a connected line graph for weekly mood using Unicode characters.
+Uses ● for data points and ╱─╲ for connections between points.
 @param mood_data table Weekly mood data from getWeeklyMood
 @param energy_categories table Energy level names
 @param _max_width number Maximum width in characters (unused, we use fixed widths)
@@ -618,62 +516,118 @@ Each day is divided into time slots (Morning, Afternoon, Evening, Night).
 --]]
 function Journal:renderMoodLineGraph(mood_data, energy_categories, _max_width)
     local widgets = {}
-    local settings = Data:loadUserSettings()
-    local time_slots = settings.time_slots or {"Morning", "Afternoon", "Evening", "Night"}
-    local num_slots = #time_slots
+    local num_levels = #energy_categories
+    local num_days = #mood_data
 
-    -- Fixed layout: each slot gets 2 chars, prefix is 4 chars "X | "
-    local slot_width = 2
-    local day_width = slot_width * num_slots  -- 8 chars per day
+    -- Calculate average daily score for each day (simplify from time slots)
+    local daily_scores = {}
+    local score_step = 10 / num_levels
 
-    -- Build the graph rows (top to bottom = highest to lowest score)
-    local score_step = 10 / #energy_categories
-    for row = 1, #energy_categories do
-        local row_score = math.floor((#energy_categories - row + 1) * score_step)
-        local label = string.sub(energy_categories[row], 1, 1)
-        local line = label .. " | "  -- 4 chars: "E | "
-
-        for __, day in ipairs(mood_data) do
-            for __, slot in ipairs(time_slots) do
-                local slot_score = day.slot_scores[slot]
-                local marker = "."
-                if slot_score then
-                    if math.abs(slot_score - row_score) < score_step / 2 then
-                        marker = "*"
-                    end
-                end
-                line = line .. marker .. " "  -- 2 chars per slot
+    for day_idx, day in ipairs(mood_data) do
+        local total_score = 0
+        local count = 0
+        for _idx, slot_score in pairs(day.slot_scores) do
+            if slot_score then
+                total_score = total_score + slot_score
+                count = count + 1
             end
+        end
+        -- Map score to row index (1 = top/highest energy, num_levels = bottom/lowest)
+        if count > 0 then
+            local avg_score = total_score / count
+            -- Convert score (0-10) to row (1-num_levels)
+            local row = num_levels - math.floor(avg_score / score_step)
+            row = math.max(1, math.min(num_levels, row))
+            daily_scores[day_idx] = row
+        else
+            daily_scores[day_idx] = nil  -- No data
+        end
+    end
+
+    -- Column width for each day (enough for point + connector)
+    local col_width = 6  -- "  ●── " pattern
+
+    -- Build each row of the graph
+    for row = 1, num_levels do
+        local label = string.sub(energy_categories[row], 1, 1)
+        local line = label .. " │"  -- Y-axis label with vertical bar
+
+        for day_idx = 1, num_days do
+            local day_row = daily_scores[day_idx]
+            local next_row = daily_scores[day_idx + 1]
+
+            -- Determine what to draw at this position
+            local cell = ""
+
+            if day_row == row then
+                -- This day's data point is on this row
+                cell = " ●"
+
+                -- Add connector to next point if exists
+                if next_row then
+                    if next_row < row then
+                        cell = cell .. "╱ "  -- Going up (next is higher energy)
+                    elseif next_row > row then
+                        cell = cell .. "╲ "  -- Going down (next is lower energy)
+                    else
+                        cell = cell .. "──"  -- Same level
+                    end
+                else
+                    cell = cell .. "  "  -- No next point
+                end
+            elseif day_row and next_row then
+                -- Check if connector passes through this row
+                local min_row = math.min(day_row, next_row)
+                local max_row = math.max(day_row, next_row)
+
+                if row > min_row and row < max_row then
+                    -- Connector passes through this row
+                    if day_row < next_row then
+                        cell = "  ╲ "  -- Going down
+                    else
+                        cell = "  ╱ "  -- Going up
+                    end
+                else
+                    cell = "    "  -- Empty
+                end
+            else
+                cell = "    "  -- Empty cell
+            end
+
+            -- Pad to col_width
+            while #cell < col_width do
+                cell = cell .. " "
+            end
+            line = line .. cell
         end
 
         table.insert(widgets, TextWidget:new{
             text = line,
-            face = Font:getFace("cfont", 10),
+            face = Font:getFace("cfont", 11),
         })
     end
 
-    -- Baseline: same prefix width, then dashes matching day widths
-    local baseline = "  + "  -- 4 chars to match "X | "
-    for _ = 1, 7 do
-        baseline = baseline .. string.rep("-", day_width)
+    -- Baseline with axis
+    local baseline = "  +"
+    for _ = 1, num_days do
+        baseline = baseline .. string.rep("─", col_width)
     end
     table.insert(widgets, TextWidget:new{
         text = baseline,
-        face = Font:getFace("cfont", 10),
+        face = Font:getFace("cfont", 11),
     })
 
-    -- Day labels: same prefix width, then centered labels
-    local day_labels = "    "  -- 4 spaces to match "X | "
-    for __, day in ipairs(mood_data) do
+    -- Day labels centered under each column
+    local day_labels = "   "  -- Offset for y-axis label
+    for _idx, day in ipairs(mood_data) do
         local abbr = day.abbr
-        local total_pad = day_width - #abbr
-        local left = math.floor(total_pad / 2)
-        local right = total_pad - left
-        day_labels = day_labels .. string.rep(" ", left) .. abbr .. string.rep(" ", right)
+        local left_pad = math.floor((col_width - #abbr) / 2)
+        local right_pad = col_width - #abbr - left_pad
+        day_labels = day_labels .. string.rep(" ", left_pad) .. abbr .. string.rep(" ", right_pad)
     end
     table.insert(widgets, TextWidget:new{
         text = day_labels,
-        face = Font:getFace("cfont", 10),
+        face = Font:getFace("cfont", 11),
     })
 
     return widgets
@@ -878,6 +832,7 @@ function Journal:saveReflection(text)
     logs[today].reflection_time = os.time()
 
     Data:saveDailyLogs(logs)
+    UIManager:setDirty("all", "ui")
 
     UIManager:show(InfoMessage:new{
         text = _("Reflection saved!"),
@@ -991,14 +946,14 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     -- Calculate completion rate per category
     local category_stats = {}
-    for __, cat in ipairs(categories) do
+    for _idx, cat in ipairs(categories) do
         category_stats[cat] = { completed = 0, total = 0 }
     end
     category_stats["None"] = { completed = 0, total = 0 }
 
     -- Count quests per category
-    for __, quest_type in ipairs({"daily", "weekly", "monthly"}) do
-        for __, quest in ipairs(quests[quest_type] or {}) do
+    for _idx, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _idx, quest in ipairs(quests[quest_type] or {}) do
             local cat = quest.category or "None"
             if not category_stats[cat] then
                 category_stats[cat] = { completed = 0, total = 0 }
@@ -1012,7 +967,7 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     -- Build data for spider chart (only categories with quests)
     local active_categories = {}
-    for __, cat in ipairs(categories) do
+    for _idx, cat in ipairs(categories) do
         if category_stats[cat] and category_stats[cat].total > 0 then
             local rate = category_stats[cat].completed / category_stats[cat].total
             table.insert(active_categories, { name = cat, rate = rate })
@@ -1137,7 +1092,7 @@ function Journal:buildCategorySpiderChart(_content_width)
 
     else
         -- Fallback: simple horizontal bar chart for any number of categories
-        for __, cat_data in ipairs(active_categories) do
+        for _idx, cat_data in ipairs(active_categories) do
             local bar_width = 20
             local filled = math.floor(cat_data.rate * bar_width)
             local bar = string.rep("█", filled) .. string.rep("░", bar_width - filled)

@@ -145,6 +145,7 @@ function UIConfig:getDimensions()
         -- Progress elements
         progress_width = Screen:scaleBySize(70),
         progress_bar_height = Screen:scaleBySize(4),
+        button_gap = Screen:scaleBySize(2),  -- Gap between inline buttons
 
         -- Grid layout
         grid_columns = 3,  -- Responsive: could adjust based on screen width
@@ -177,6 +178,19 @@ function UIConfig:getDimensions()
         font_stat_value = 20,       -- Large stat numbers
         font_stat_label = 10,       -- Stat labels below values
 
+        -- Button-specific font sizes
+        font_button_icon = 16,      -- +/- button icons
+        font_button_primary = 12,   -- Done button text
+        font_button_secondary = 10, -- Skip button text
+
+        -- Specialized element fonts
+        font_nav_button = 18,       -- Day navigation arrows
+        font_progress = 11,         -- Progress bar text (3/10)
+        font_heatmap_title = 18,    -- Heatmap section title
+        font_heatmap_label = 14,    -- Heatmap legend labels
+        font_graph = 11,            -- Line graph text (journal)
+        font_quote = 14,            -- Daily quote text
+
         -- ============================================================
         -- Spacing Scale (consistent negative space across all screens)
         -- ============================================================
@@ -191,6 +205,13 @@ function UIConfig:getDimensions()
         -- ============================================================
         stat_card_height = Screen:scaleBySize(60),
         stat_card_spacing = Screen:scaleBySize(10),
+
+        -- ============================================================
+        -- Dialog and Layout Constants
+        -- ============================================================
+        dialog_width_ratio = 0.8,   -- Standard dialog width (80% of screen)
+        row_gap = Screen:scaleBySize(2),     -- Gap between adjacent rows/buttons
+        section_gap = Screen:scaleBySize(4), -- Gap between sections
     }
 
     return self._dimensions
@@ -290,6 +311,8 @@ function UIConfig:getColors()
         colors.active_fg = Blitbuffer.COLOR_BLACK
         colors.inactive_bg = Blitbuffer.COLOR_BLACK
         colors.inactive_fg = Blitbuffer.COLOR_WHITE
+        -- Subtle background for completed items
+        colors.completed_bg = Blitbuffer.gray(0.15)
     else
         -- Day mode colors (normal)
         colors.background = Blitbuffer.COLOR_WHITE
@@ -303,6 +326,8 @@ function UIConfig:getColors()
         colors.active_fg = Blitbuffer.COLOR_WHITE
         colors.inactive_bg = Blitbuffer.COLOR_WHITE
         colors.inactive_fg = Blitbuffer.COLOR_BLACK
+        -- Subtle background for completed items
+        colors.completed_bg = Blitbuffer.gray(0.97)
     end
 
     -- Add color-specific values for color e-readers
@@ -625,6 +650,74 @@ Get the content height available after safe zone.
 --]]
 function UIConfig:getContentHeight()
     return Screen:getHeight() - self:getTopSafeZone()
+end
+
+-- ============================================================================
+-- Coordinate Transformation Helpers
+-- ============================================================================
+
+--[[--
+Calculate the Y offset to convert content-relative coordinates to screen coordinates.
+This accounts for frame padding and scroll position.
+
+The issue: GestureRange expects screen-absolute coordinates, but content Y positions
+are tracked relative to the VerticalGroup inside a FrameContainer with padding.
+
+@tparam number frame_padding The padding applied to the content frame (default: Size.padding.large)
+@treturn number Y offset to add to content-relative Y when creating GestureRange
+--]]
+function UIConfig:getFrameYOffset(frame_padding)
+    return frame_padding or Size.padding.large
+end
+
+--[[--
+Convert a screen tap Y coordinate to content-relative Y coordinate.
+This is the inverse transformation for tap detection.
+
+@tparam number screen_y The screen Y coordinate from ges.pos.y
+@tparam number frame_padding The padding applied to the content frame
+@tparam table scroll_container Optional ScrollableContainer instance
+@treturn number Content-relative Y coordinate
+--]]
+function UIConfig:screenToContentY(screen_y, frame_padding, scroll_container)
+    frame_padding = frame_padding or Size.padding.large
+
+    -- Get scroll offset (how much content has scrolled up)
+    local scroll_offset = 0
+    if scroll_container then
+        -- Try to get scroll position - use private field as fallback
+        if scroll_container._scroll_offset_y then
+            scroll_offset = scroll_container._scroll_offset_y
+        end
+    end
+
+    -- Convert: subtract frame padding (widget starts after padding),
+    -- then add scroll offset (scrolled content has higher content Y)
+    return screen_y - frame_padding + scroll_offset
+end
+
+--[[--
+Convert a content-relative Y coordinate to screen Y coordinate.
+Use this when creating GestureRange from content positions.
+
+@tparam number content_y The content-relative Y coordinate
+@tparam number frame_padding The padding applied to the content frame
+@tparam table scroll_container Optional ScrollableContainer instance
+@treturn number Screen Y coordinate for GestureRange
+--]]
+function UIConfig:contentToScreenY(content_y, frame_padding, scroll_container)
+    frame_padding = frame_padding or Size.padding.large
+
+    -- Get scroll offset
+    local scroll_offset = 0
+    if scroll_container then
+        if scroll_container._scroll_offset_y then
+            scroll_offset = scroll_container._scroll_offset_y
+        end
+    end
+
+    -- Convert: add frame padding, subtract scroll offset
+    return content_y + frame_padding - scroll_offset
 end
 
 return UIConfig

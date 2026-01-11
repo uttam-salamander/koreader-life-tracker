@@ -8,7 +8,6 @@ local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
-local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -33,6 +32,7 @@ local _ = require("gettext")
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
+local UIHelpers = require("modules/ui_helpers")
 
 local Reminders = {}
 
@@ -50,34 +50,6 @@ local DAY_NAMES = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 local DAY_FULL = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 
 --[[--
-Dispatch a corner gesture to the user's configured action.
-@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
-@treturn bool True if gesture was handled
---]]
-function Reminders:dispatchCornerGesture(gesture_name)
-    if self.ui and self.ui.gestures then
-        local gesture_manager = self.ui.gestures
-        local settings = gesture_manager.gestures or {}
-        local action = settings[gesture_name]
-        if action then
-            local Dispatcher = require("dispatcher")
-            Dispatcher:execute(action)
-            return true
-        end
-    end
-
-    if gesture_name == "tap_top_right_corner" then
-        self.ui:handleEvent(Event:new("ToggleFrontlight"))
-        return true
-    elseif gesture_name == "tap_top_left_corner" then
-        self.ui:handleEvent(Event:new("ToggleBookmark"))
-        return true
-    end
-
-    return false
-end
-
---[[--
 Show the reminders view.
 --]]
 function Reminders:show(ui)
@@ -93,8 +65,8 @@ function Reminders:showRemindersView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- KOReader reserves top 1/8 (12.5%) for menu gesture
-    local top_safe_zone = math.floor(screen_height / 8)
+    -- KOReader reserves top ~10% for menu gesture
+    local top_safe_zone = UIConfig:getTopSafeZone()
 
     local reminders = Data:loadReminders()
 
@@ -133,7 +105,7 @@ function Reminders:showRemindersView()
         table.insert(content, VerticalSpan:new{ width = Size.padding.small })
         self.current_y = self.current_y + Size.padding.small
 
-        for __, reminder in ipairs(upcoming) do
+        for _idx, reminder in ipairs(upcoming) do
             local time_until = self:formatTimeUntil(reminder.time)
             local row = self:buildReminderRow(reminder, content_width, time_until)
             table.insert(content, row)
@@ -158,7 +130,7 @@ function Reminders:showRemindersView()
     -- Active reminders section
     self.reminder_rows = {}
     local active_count = 0
-    for __, reminder in ipairs(reminders) do
+    for _idx, reminder in ipairs(reminders) do
         if reminder.active then
             active_count = active_count + 1
             local row = self:buildReminderRow(reminder, content_width)
@@ -179,7 +151,7 @@ function Reminders:showRemindersView()
 
     -- Inactive reminders
     local inactive_count = 0
-    for __, reminder in ipairs(reminders) do
+    for _idx, reminder in ipairs(reminders) do
         if not reminder.active then
             if inactive_count == 0 then
                 table.insert(content, VerticalSpan:new{ width = Size.padding.default })
@@ -284,74 +256,19 @@ function Reminders:showRemindersView()
     -- Store top_safe_zone for gesture handlers
     self.top_safe_zone = top_safe_zone
 
-    -- Setup gesture handlers (below top zone)
+    -- Setup reminder row gesture handlers
     self:setupGestureHandlers(content_width)
 
-    -- KOReader gesture zone dimensions
-    local corner_size = math.floor(screen_width / 8)
-    local corner_height = math.floor(screen_height / 8)
-
-    -- Top CENTER zone - Opens KOReader menu
-    self.reminders_widget.ges_events.TopCenterTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = corner_size,
-                y = 0,
-                w = screen_width - corner_size * 2,
-                h = top_safe_zone,
-            },
-        },
+    -- Setup corner gesture handlers using shared helpers
+    local gesture_dims = {
+        screen_width = screen_width,
+        screen_height = screen_height,
+        top_safe_zone = top_safe_zone,
     }
-    self.reminders_widget.onTopCenterTap = function()
-        if self.ui and self.ui.menu then
-            self.ui.menu:onShowMenu()
-        else
-            self.ui:handleEvent(Event:new("ShowReaderMenu"))
-        end
-        return true
-    end
-
-    -- Corner tap handlers
-    self.reminders_widget.ges_events.TopLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.reminders_widget.onTopLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_left_corner")
-    end
-
-    self.reminders_widget.ges_events.TopRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.reminders_widget.onTopRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_right_corner")
-    end
-
-    self.reminders_widget.ges_events.BottomLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.reminders_widget.onBottomLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_left_corner")
-    end
-
-    self.reminders_widget.ges_events.BottomRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.reminders_widget.onBottomRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_right_corner")
-    end
+    UIHelpers.setupCornerGestures(self.reminders_widget, self, gesture_dims)
+    UIHelpers.setupSwipeToClose(self.reminders_widget, function()
+        UIManager:close(self.reminders_widget)
+    end, gesture_dims)
 
     UIManager:show(self.reminders_widget)
 end
@@ -429,12 +346,13 @@ end
 --[[--
 Setup gesture handlers for reminders view.
 --]]
-function Reminders:setupGestureHandlers(content_width)  -- upcoming not used anymore
-    local screen_height = Screen:getHeight()
-    local screen_width = Screen:getWidth()
+function Reminders:setupGestureHandlers(content_width)
     local reminders_module = self
 
-    -- Reminder row taps - use tracked Y positions
+    -- NOTE: self.current_y starts at Size.padding.large, so all stored Y positions
+    -- are already in SCREEN coordinates. We do NOT need to add frame_y_offset.
+
+    -- Reminder row taps - use tracked Y positions (already screen coordinates)
     for idx, row_info in ipairs(self.reminder_rows) do
         local row_y = row_info.y
         local title_width = content_width - getButtonWidth() - Size.padding.small * 3
@@ -477,7 +395,7 @@ function Reminders:setupGestureHandlers(content_width)  -- upcoming not used any
         end
     end
 
-    -- Add button tap - use tracked position
+    -- Add button tap - use tracked position (already screen coordinates)
     self.reminders_widget.ges_events.AddReminder = {
         GestureRange:new{
             ges = "tap",
@@ -493,27 +411,7 @@ function Reminders:setupGestureHandlers(content_width)  -- upcoming not used any
         reminders_module:showAddReminder()
         return true
     end
-
-    -- Swipe to close (leave top 10% for KOReader menu)
-    local top_safe_zone = math.floor(screen_height * 0.1)
-    self.reminders_widget.ges_events.Swipe = {
-        GestureRange:new{
-            ges = "swipe",
-            range = Geom:new{
-                x = 0,
-                y = top_safe_zone,
-                w = screen_width - Navigation.TAB_WIDTH,
-                h = screen_height - top_safe_zone,
-            },
-        },
-    }
-    self.reminders_widget.onSwipe = function(_, _, ges)
-        if ges.direction == "east" then
-            UIManager:close(reminders_module.reminders_widget)
-            return true
-        end
-        return false
-    end
+    -- Note: Swipe-to-close handled by UIHelpers.setupSwipeToClose in showRemindersView
 end
 
 --[[--
@@ -531,7 +429,7 @@ function Reminders:formatRepeatDays(repeat_days)
     -- Check for weekdays (Mon-Fri)
     local weekdays = {Mon=true, Tue=true, Wed=true, Thu=true, Fri=true}
     local is_weekdays = true
-    for __, day in ipairs(repeat_days) do
+    for _idx, day in ipairs(repeat_days) do
         if not weekdays[day] then
             is_weekdays = false
             break
@@ -544,7 +442,7 @@ function Reminders:formatRepeatDays(repeat_days)
     -- Check for weekends (Sat-Sun)
     local weekends = {Sat=true, Sun=true}
     local is_weekends = true
-    for __, day in ipairs(repeat_days) do
+    for _idx, day in ipairs(repeat_days) do
         if not weekends[day] then
             is_weekends = false
             break
@@ -567,13 +465,13 @@ function Reminders:getUpcomingToday(reminders)
 
     local upcoming = {}
 
-    for __, reminder in ipairs(reminders) do
+    for _idx, reminder in ipairs(reminders) do
         if reminder.active then
             local is_today = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
                 is_today = true
             else
-                for __, day in ipairs(reminder.repeat_days) do
+                for _idx, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
                         is_today = true
                         break
@@ -1010,7 +908,7 @@ function Reminders:showCustomDaysWithSelection(title, time, start_date)
         callback = function()
             UIManager:close(self.custom_dialog)
             local days = {}
-            for __, abbr in ipairs(DAY_NAMES) do
+            for _idx, abbr in ipairs(DAY_NAMES) do
                 if self.selected_days[abbr] then
                     table.insert(days, abbr)
                 end
@@ -1046,6 +944,7 @@ function Reminders:createReminder(title, time, repeat_days, start_date)
     -- Refresh
     UIManager:close(self.reminders_widget)
     self:showRemindersView()
+    UIManager:setDirty("all", "ui")
 end
 
 --[[--
@@ -1102,6 +1001,7 @@ function Reminders:toggleReminder(reminder)
 
     UIManager:close(self.reminders_widget)
     self:showRemindersView()
+    UIManager:setDirty("all", "ui")
 end
 
 --[[--
@@ -1125,6 +1025,7 @@ function Reminders:confirmDelete(reminder)
                     Data:deleteReminder(reminder.id)
                     UIManager:close(self.reminders_widget)
                     self:showRemindersView()
+                    UIManager:setDirty("all", "ui")
                 end,
             }},
         },
@@ -1144,7 +1045,7 @@ function Reminders:checkDueReminders()
 
     local due = {}
 
-    for __, reminder in ipairs(reminders) do
+    for _idx, reminder in ipairs(reminders) do
         if reminder.active and reminder.time == current_time then
             local should_fire = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
@@ -1152,7 +1053,7 @@ function Reminders:checkDueReminders()
                     should_fire = true
                 end
             else
-                for __, day in ipairs(reminder.repeat_days) do
+                for _idx, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
                         if reminder.last_triggered ~= today_date then
                             should_fire = true
@@ -1192,13 +1093,13 @@ function Reminders:getTodayReminders()
 
     local today_reminders = {}
 
-    for __, reminder in ipairs(reminders) do
+    for _idx, reminder in ipairs(reminders) do
         if reminder.active then
             local is_today = false
             if not reminder.repeat_days or #reminder.repeat_days == 0 then
                 is_today = true
             else
-                for __, day in ipairs(reminder.repeat_days) do
+                for _idx, day in ipairs(reminder.repeat_days) do
                     if day == today_abbr then
                         is_today = true
                         break

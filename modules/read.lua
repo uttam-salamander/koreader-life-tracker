@@ -16,7 +16,6 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
-local Event = require("ui/event")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -34,6 +33,7 @@ local _ = require("gettext")
 local Navigation = require("modules/navigation")
 local ReadingStats = require("modules/reading_stats")
 local UIConfig = require("modules/ui_config")
+local UIHelpers = require("modules/ui_helpers")
 
 local Read = {}
 
@@ -200,7 +200,7 @@ function Read:getRecentBooks()
 
     -- Last fallback: Get books from KOReader statistics database
     local db_books = ReadingStats:getRecentBooksFromDB(12)
-    for _, db_book in ipairs(db_books) do
+    for _idx, db_book in ipairs(db_books) do
         table.insert(books, {
             file = nil,  -- DB doesn't store file path
             title = db_book.title,
@@ -504,7 +504,14 @@ function Read:createStatsOverview(content_width)
         right_stats,
     })
 
-    return stats_row
+    -- Wrap in FrameContainer to match first row width
+    return FrameContainer:new{
+        width = content_width,
+        padding = 0,
+        bordersize = 0,
+        background = bg_color,
+        stats_row,
+    }
 end
 
 --[[--
@@ -678,50 +685,17 @@ function Read:showReadView()
     -- Setup book tap handlers
     self:setupBookTapHandlers()
 
-    -- Top zone gesture for KOReader menu
-    local top_safe_zone = math.floor(screen_height / 8)
-    local corner_size = math.floor(screen_width / 8)
-
-    self.read_widget.ges_events.TopCenterTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = corner_size,
-                y = 0,
-                w = screen_width - corner_size * 2,
-                h = top_safe_zone,
-            },
-        },
+    -- Setup corner gesture handlers using shared helpers
+    local top_safe_zone = UIConfig:getTopSafeZone()
+    local gesture_dims = {
+        screen_width = screen_width,
+        screen_height = screen_height,
+        top_safe_zone = top_safe_zone,
     }
-    local read_ui = self.ui
-    self.read_widget.onTopCenterTap = function()
-        if read_ui and read_ui.menu then
-            read_ui.menu:onShowMenu()
-        elseif read_ui then
-            read_ui:handleEvent(Event:new("ShowReaderMenu"))
-        end
-        return true
-    end
-
-    -- Swipe to close
-    self.read_widget.ges_events.Swipe = {
-        GestureRange:new{
-            ges = "swipe",
-            range = Geom:new{
-                x = 0,
-                y = 0,
-                w = screen_width - Navigation.TAB_WIDTH,
-                h = screen_height,
-            },
-        },
-    }
-    self.read_widget.onSwipe = function(_, _, ges)
-        if ges.direction == "east" then
-            UIManager:close(self.read_widget)
-            return true
-        end
-        return false
-    end
+    UIHelpers.setupCornerGestures(self.read_widget, self, gesture_dims)
+    UIHelpers.setupSwipeToClose(self.read_widget, function()
+        UIManager:close(self.read_widget)
+    end, gesture_dims)
 
     UIManager:show(self.read_widget)
 end
@@ -736,8 +710,10 @@ function Read:setupBookTapHandlers()
     local card_width = self.card_width or 100
     local card_height = self.card_height or 150
 
-    -- Header heights (approximate)
-    local header_height = 150
+    -- NOTE: The content is laid out with visual_y tracking, but we need to track
+    -- where the book grid actually starts. Use book_grid_y if set, otherwise approximate.
+    -- The header includes: title, stats, section header, spacing - approximately scaled 140px
+    local header_height = self.book_grid_y or UIConfig:scale(160)
 
     for i, pos in pairs(self.card_positions) do
         local x = Size.padding.large + pos.col * (card_width + getCardSpacing())

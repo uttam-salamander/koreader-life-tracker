@@ -256,8 +256,9 @@ function Data:saveUserSettings(user_settings)
 end
 
 --[[--
-Get a random quote from the user's quotes list.
-@treturn string A random quote, or nil if no quotes exist
+Get today's quote from the user's quotes list.
+Persists the same quote for the entire day.
+@treturn string Today's quote, or nil if no quotes exist
 --]]
 function Data:getRandomQuote()
     local settings = self:loadUserSettings()
@@ -265,8 +266,30 @@ function Data:getRandomQuote()
     if not quotes or #quotes == 0 then
         return nil
     end
+
+    local today = self:getCurrentDate()
+    local s = self:getSettings()
+
+    -- Check if we have a quote for today
+    local daily_quote_date = s:readSetting("daily_quote_date")
+    local daily_quote = s:readSetting("daily_quote")
+
+    if daily_quote_date == today and daily_quote then
+        return daily_quote
+    end
+
+    -- Select new quote for today using date as seed for consistency
+    local date_num = tonumber(today:gsub("-", "")) or os.time()
+    math.randomseed(date_num)
     local idx = math.random(1, #quotes)
-    return quotes[idx]
+    daily_quote = quotes[idx]
+
+    -- Save for today
+    s:saveSetting("daily_quote_date", today)
+    s:saveSetting("daily_quote", daily_quote)
+    s:flush()
+
+    return daily_quote
 end
 
 -- ============================================

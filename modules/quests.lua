@@ -6,14 +6,13 @@ Manages quest CRUD, list views, and completion with inline buttons.
 --]]
 
 local Blitbuffer = require("ffi/blitbuffer")
+local Button = require("ui/widget/button")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
-local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
-local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InfoMessage = require("ui/widget/infomessage")
@@ -33,6 +32,8 @@ local _ = require("gettext")
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
+local UIHelpers = require("modules/ui_helpers")
+local Celebration = require("modules/celebration")
 
 local Quests = {}
 
@@ -65,34 +66,6 @@ end
 Quests.current_type = "daily"
 
 --[[--
-Dispatch a corner gesture to the user's configured action.
-@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
-@treturn bool True if gesture was handled
---]]
-function Quests:dispatchCornerGesture(gesture_name)
-    if self.ui and self.ui.gestures then
-        local gesture_manager = self.ui.gestures
-        local settings = gesture_manager.gestures or {}
-        local action = settings[gesture_name]
-        if action then
-            local Dispatcher = require("dispatcher")
-            Dispatcher:execute(action)
-            return true
-        end
-    end
-
-    if gesture_name == "tap_top_right_corner" then
-        self.ui:handleEvent(Event:new("ToggleFrontlight"))
-        return true
-    elseif gesture_name == "tap_top_left_corner" then
-        self.ui:handleEvent(Event:new("ToggleBookmark"))
-        return true
-    end
-
-    return false
-end
-
---[[--
 Show the quests view.
 @tparam table ui The UI manager reference
 --]]
@@ -109,9 +82,9 @@ function Quests:showQuestsView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- KOReader reserves top 1/8 (12.5%) for menu gesture
+    -- KOReader reserves top ~10% for menu gesture
     -- Title can be in this zone (non-interactive), but gesture handlers must not be
-    local top_safe_zone = math.floor(screen_height / 8)
+    local top_safe_zone = UIConfig:getTopSafeZone()
 
     -- Track visual Y position starting from frame padding
     local visual_y = Size.padding.large
@@ -162,9 +135,9 @@ function Quests:showQuestsView()
     self.quest_list_start_y = self.current_y
 
     -- Quest list
-    self.quest_rows = {}
     local quests = Data:loadAllQuests()
     local quest_list = quests[self.current_type] or {}
+    local quests_module = self
 
     if #quest_list == 0 then
         table.insert(content, VerticalSpan:new{ width = Size.padding.large })
@@ -176,10 +149,9 @@ function Quests:showQuestsView()
         })
         self.current_y = self.current_y + 20
     else
-        for idx, quest in ipairs(quest_list) do
+        for _idx, quest in ipairs(quest_list) do
             local quest_row = self:buildQuestRow(quest, content_width)
             table.insert(content, quest_row)
-            table.insert(self.quest_rows, {quest = quest, idx = idx, y = self.current_y})
             self.current_y = self.current_y + getQuestRowHeight() + 2
         end
     end
@@ -187,22 +159,20 @@ function Quests:showQuestsView()
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
     self.current_y = self.current_y + Size.padding.large
 
-    -- Add quest button - store its Y position
-    self.add_button_y = self.current_y
-    local add_button = FrameContainer:new{
+    -- Add quest button using Button widget with callback
+    local add_button = Button:new{
+        text = _("[+] Add New Quest"),
         width = content_width,
-        height = getQuestRowHeight(),
-        padding = Size.padding.small,
+        max_width = content_width,
         bordersize = 2,
-        background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{w = content_width - Size.padding.small * 2, h = getQuestRowHeight() - Size.padding.small * 2},
-            TextWidget:new{
-                text = _("[+] Add New Quest"),
-                face = Font:getFace("cfont", 16),
-                bold = true,
-            },
-        },
+        margin = 0,
+        padding = Size.padding.default,
+        text_font_face = "cfont",
+        text_font_size = 16,
+        text_font_bold = true,
+        callback = function()
+            quests_module:showAddQuestDialog()
+        end,
     }
     table.insert(content, add_button)
 
@@ -251,80 +221,22 @@ function Quests:showQuestsView()
         main_layout,
     }
 
-    -- Setup gesture handlers
-    self:setupGestureHandlers(content_width)
-
-    -- KOReader gesture zone dimensions
-    local corner_size = math.floor(screen_width / 8)
-    local corner_height = math.floor(screen_height / 8)
-
-    -- Top CENTER zone - Opens KOReader menu
-    self.quests_widget.ges_events.TopCenterTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = corner_size,
-                y = 0,
-                w = screen_width - corner_size * 2,
-                h = top_safe_zone,
-            },
-        },
+    -- Setup gesture handlers using shared helpers
+    local gesture_dims = {
+        screen_width = screen_width,
+        screen_height = screen_height,
+        top_safe_zone = top_safe_zone,
     }
-    self.quests_widget.onTopCenterTap = function()
-        if self.ui and self.ui.menu then
-            self.ui.menu:onShowMenu()
-        else
-            self.ui:handleEvent(Event:new("ShowReaderMenu"))
-        end
-        return true
-    end
-
-    -- Corner tap handlers
-    self.quests_widget.ges_events.TopLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.quests_widget.onTopLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_left_corner")
-    end
-
-    self.quests_widget.ges_events.TopRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.quests_widget.onTopRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_right_corner")
-    end
-
-    self.quests_widget.ges_events.BottomLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.quests_widget.onBottomLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_left_corner")
-    end
-
-    self.quests_widget.ges_events.BottomRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.quests_widget.onBottomRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_right_corner")
-    end
+    UIHelpers.setupCornerGestures(self.quests_widget, self, gesture_dims)
+    UIHelpers.setupSwipeToClose(self.quests_widget, function()
+        UIManager:close(self.quests_widget)
+    end, gesture_dims)
 
     UIManager:show(self.quests_widget)
 end
 
 --[[--
-Build type tabs (Daily / Weekly / Monthly).
+Build type tabs (Daily / Weekly / Monthly) using Button widgets.
 --]]
 function Quests:buildTypeTabs()
     local types = {
@@ -332,43 +244,34 @@ function Quests:buildTypeTabs()
         {id = "weekly", label = "Weekly"},
         {id = "monthly", label = "Monthly"},
     }
+    local quests_module = self
 
     local tabs = HorizontalGroup:new{ align = "center" }
-    self.type_tab_positions = {}
-    local x_offset = 0
+    local BUTTON_GAP = UIConfig:dim("button_gap") or 4
 
     for idx, type_info in ipairs(types) do
         local is_active = (type_info.id == self.current_type)
-        local bg_color = is_active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
-        local fg_color = is_active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
 
-        local tab = FrameContainer:new{
+        -- Create Button with callback
+        local tab_button = Button:new{
+            text = type_info.label,
             width = getTypeTabWidth(),
-            height = getTypeTabHeight(),
-            padding = Size.padding.small,
+            max_width = getTypeTabWidth(),
             bordersize = is_active and 2 or 1,
-            background = bg_color,
-            CenterContainer:new{
-                dimen = Geom:new{w = getTypeTabWidth() - Size.padding.small * 2, h = getTypeTabHeight() - Size.padding.small * 2},
-                TextWidget:new{
-                    text = type_info.label,
-                    face = Font:getFace("cfont", 14),
-                    fgcolor = fg_color,
-                    bold = is_active,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 14,
+            text_font_bold = is_active,
+            preselect = is_active,  -- Inverts display for active tab
+            callback = function()
+                quests_module:switchType(type_info.id)
+            end,
         }
 
-        self.type_tab_positions[idx] = {
-            x = x_offset + Size.padding.large,
-            w = getTypeTabWidth(),
-            type_id = type_info.id,
-        }
-        x_offset = x_offset + getTypeTabWidth() + 4
-
-        table.insert(tabs, tab)
+        table.insert(tabs, tab_button)
         if idx < #types then
-            table.insert(tabs, HorizontalSpan:new{ width = 4 })
+            table.insert(tabs, HorizontalSpan:new{ width = BUTTON_GAP })
         end
     end
 
@@ -378,11 +281,15 @@ end
 --[[--
 Build a single quest row with inline buttons.
 Supports both binary (OK/Skip) and progressive (+/-) quests.
+Uses Button widgets with callbacks for tap handling.
 --]]
 function Quests:buildQuestRow(quest, content_width)
     local today = os.date("%Y-%m-%d")
-    local status_bg = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE
-    local text_color = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
+    local colors = UIConfig:getColors()
+    local quests_module = self
+
+    local status_bg = (quest.completed and colors.completed_bg) or colors.background
+    local text_color = (quest.completed and colors.muted) or colors.foreground
 
     -- Check if progressive quest needs daily reset
     if quest.is_progressive and quest.progress_last_date ~= today then
@@ -390,47 +297,39 @@ function Quests:buildQuestRow(quest, content_width)
     end
 
     local row
+    local BUTTON_GAP = UIConfig:dim("button_gap") or 2
 
     if quest.is_progressive then
         -- Progressive quest layout: [−] [3/10 pages] [+] [Title]
         local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
         local PROGRESS_WIDTH = getProgressWidth()
-        -- Total buttons/spans: scaled values for button and progress widths
-        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - BUTTON_GAP * 2 - Size.padding.small
 
-        -- Build title with category prefix
-        local title_text = quest.title
-        if quest.category then
-            title_text = string.format("[%s] %s", quest.category:sub(1,1), quest.title)
-        elseif quest.time_slot then
-            title_text = string.format("[%s] %s", quest.time_slot:sub(1,1), quest.title)
-        end
-
+        -- Title text
         local title_widget = TextWidget:new{
-            text = title_text,
+            text = quest.title,
             face = Font:getFace("cfont", 13),
             fgcolor = text_color,
             max_width = title_width - Size.padding.small * 2,
         }
 
-        -- Minus button
-        local minus_button = FrameContainer:new{
+        -- Minus button with callback
+        local minus_button = Button:new{
+            text = "−",
             width = SMALL_BUTTON_WIDTH,
-            height = getQuestRowHeight() - 4,
-            padding = 2,
+            max_width = SMALL_BUTTON_WIDTH,
             bordersize = 1,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getQuestRowHeight() - 10},
-                TextWidget:new{
-                    text = "−",
-                    face = Font:getFace("cfont", 16),
-                    bold = true,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 16,
+            text_font_bold = true,
+            callback = function()
+                quests_module:decrementQuestProgress(quest)
+            end,
         }
 
-        -- Progress display with fill indicator
+        -- Progress display (non-interactive)
         local current = quest.progress_current or 0
         local target = quest.progress_target or 1
         local pct = math.min(1, current / target)
@@ -456,29 +355,29 @@ function Quests:buildQuestRow(quest, content_width)
             },
         }
 
-        -- Plus button
-        local plus_button = FrameContainer:new{
+        -- Plus button with callback
+        local plus_button = Button:new{
+            text = "+",
             width = SMALL_BUTTON_WIDTH,
-            height = getQuestRowHeight() - 4,
-            padding = 2,
+            max_width = SMALL_BUTTON_WIDTH,
             bordersize = 1,
-            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getQuestRowHeight() - 10},
-                TextWidget:new{
-                    text = "+",
-                    face = Font:getFace("cfont", 16),
-                    bold = true,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 16,
+            text_font_bold = true,
+            enabled = not quest.completed,
+            callback = function()
+                quests_module:incrementQuestProgress(quest)
+            end,
         }
 
         row = HorizontalGroup:new{
             align = "center",
             minus_button,
-            HorizontalSpan:new{ width = 2 },
+            HorizontalSpan:new{ width = BUTTON_GAP },
             progress_display,
-            HorizontalSpan:new{ width = 2 },
+            HorizontalSpan:new{ width = BUTTON_GAP },
             plus_button,
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
@@ -491,62 +390,54 @@ function Quests:buildQuestRow(quest, content_width)
             },
         }
     else
-        -- Binary quest layout: [OK] [Skip] [Title]
-        local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 4
+        -- Binary quest layout: [Done] [Skip] [Title]
+        local title_width = content_width - getButtonWidth() * 2 - BUTTON_GAP - Size.padding.small
 
-        -- Build title with category or time slot prefix
-        local title_text = quest.title
-        if quest.category then
-            title_text = string.format("[%s] %s", quest.category:sub(1,1), quest.title)
-        elseif quest.time_slot then
-            title_text = string.format("[%s] %s", quest.time_slot:sub(1,1), quest.title)
-        end
-
+        -- Title text
         local title_widget = TextWidget:new{
-            text = title_text,
+            text = quest.title,
             face = Font:getFace("cfont", 14),
             fgcolor = text_color,
             max_width = title_width - Size.padding.small * 2,
         }
 
-        -- Complete button (checkmark)
-        local complete_text = quest.completed and "X" or "OK"
-        local complete_button = FrameContainer:new{
+        -- Complete button with callback
+        local complete_text = quest.completed and "X" or "Done"
+        local complete_button = Button:new{
+            text = complete_text,
             width = getButtonWidth(),
-            height = getQuestRowHeight() - 4,
-            padding = 2,
+            max_width = getButtonWidth(),
             bordersize = 1,
-            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = getButtonWidth() - 6, h = getQuestRowHeight() - 10},
-                TextWidget:new{
-                    text = complete_text,
-                    face = Font:getFace("cfont", 12),
-                    bold = true,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 12,
+            text_font_bold = true,
+            callback = function()
+                quests_module:toggleQuestComplete(quest)
+            end,
         }
 
-        -- Skip button
-        local skip_button = FrameContainer:new{
+        -- Skip button with callback
+        local skip_button = Button:new{
+            text = "Skip",
             width = getButtonWidth(),
-            height = getQuestRowHeight() - 4,
-            padding = 2,
+            max_width = getButtonWidth(),
             bordersize = 1,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = getButtonWidth() - 6, h = getQuestRowHeight() - 10},
-                TextWidget:new{
-                    text = "Skip",
-                    face = Font:getFace("cfont", 10),
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 10,
+            text_font_bold = false,
+            callback = function()
+                quests_module:skipQuest(quest)
+            end,
         }
 
         row = HorizontalGroup:new{
             align = "center",
             complete_button,
-            HorizontalSpan:new{ width = 2 },
+            HorizontalSpan:new{ width = BUTTON_GAP },
             skip_button,
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
@@ -571,223 +462,19 @@ function Quests:buildQuestRow(quest, content_width)
 end
 
 --[[--
-Setup gesture handlers for quests view.
+Switch quest type (Daily/Weekly/Monthly).
+Called by type tab Button callbacks.
 --]]
-function Quests:setupGestureHandlers(content_width)
-    local screen_height = Screen:getHeight()
-    local screen_width = Screen:getWidth()
-    local quests_module = self
-
-    -- Type tab taps - use tracked position
-    local type_y = self.type_tabs_y
-    for idx, pos in ipairs(self.type_tab_positions) do
-        local gesture_name = "TypeTab_" .. idx
-        self.quests_widget.ges_events[gesture_name] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = pos.x,
-                    y = type_y,
-                    w = pos.w,
-                    h = getTypeTabHeight(),
-                },
-            },
-        }
-        local type_id = pos.type_id
-        self.quests_widget["on" .. gesture_name] = function()
-            if type_id ~= quests_module.current_type then
-                quests_module.current_type = type_id
-                UIManager:close(quests_module.quests_widget)
-                quests_module:showQuestsView()
-            end
-            return true
+function Quests:switchType(type_id)
+    if type_id ~= self.current_type then
+        self.current_type = type_id
+        if self.quests_widget then
+            UIManager:close(self.quests_widget)
         end
-    end
-
-    -- Quest row taps - use tracked Y positions
-    -- Layout depends on quest type:
-    -- Binary: [OK] [Skip] [Title]
-    -- Progressive: [−] [progress] [+] [Title]
-    for idx, row_info in ipairs(self.quest_rows) do
-        local row_y = row_info.y
-        local quest = row_info.quest
-
-        if quest.is_progressive then
-            -- Progressive quest layout: [−] [progress] [+] [Title]
-            -- Layout: minus + span(2) + progress + span(2) + plus + span(padding.small) + title
-            local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
-            local PROGRESS_WIDTH = getProgressWidth()
-            local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
-
-            -- Minus button tap
-            local minus_gesture = "QuestMinus_" .. idx
-            self.quests_widget.ges_events[minus_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large,
-                        y = row_y,
-                        w = SMALL_BUTTON_WIDTH,
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. minus_gesture] = function()
-                quests_module:decrementQuestProgress(quest)
-                return true
-            end
-
-            -- Progress display tap (manual input)
-            local progress_gesture = "QuestProgress_" .. idx
-            self.quests_widget.ges_events[progress_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large + SMALL_BUTTON_WIDTH + 2,
-                        y = row_y,
-                        w = PROGRESS_WIDTH,
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. progress_gesture] = function()
-                quests_module:showProgressInput(quest)
-                return true
-            end
-
-            -- Plus button tap
-            local plus_gesture = "QuestPlus_" .. idx
-            self.quests_widget.ges_events[plus_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large + SMALL_BUTTON_WIDTH + 2 + PROGRESS_WIDTH + 2,
-                        y = row_y,
-                        w = SMALL_BUTTON_WIDTH,
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. plus_gesture] = function()
-                quests_module:incrementQuestProgress(quest)
-                return true
-            end
-
-            -- Title area tap (opens menu)
-            local title_gesture = "QuestTitle_" .. idx
-            self.quests_widget.ges_events[title_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large + SMALL_BUTTON_WIDTH * 2 + PROGRESS_WIDTH + 4 + Size.padding.small,
-                        y = row_y,
-                        w = title_width,
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. title_gesture] = function()
-                quests_module:showQuestActions(quest)
-                return true
-            end
-        else
-            -- Binary quest layout: [OK] [Skip] [Title]
-            local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 4
-
-            -- Complete (OK) button tap - leftmost position
-            local complete_gesture = "QuestComplete_" .. idx
-            self.quests_widget.ges_events[complete_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large,
-                        y = row_y,
-                        w = getButtonWidth(),
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. complete_gesture] = function()
-                quests_module:toggleQuestComplete(quest)
-                return true
-            end
-
-            -- Skip button tap - after OK button
-            local skip_gesture = "QuestSkip_" .. idx
-            self.quests_widget.ges_events[skip_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large + getButtonWidth() + 2,
-                        y = row_y,
-                        w = getButtonWidth(),
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. skip_gesture] = function()
-                quests_module:skipQuest(quest)
-                return true
-            end
-
-            -- Title area tap (opens menu) - after both buttons
-            local title_gesture = "QuestTitle_" .. idx
-            self.quests_widget.ges_events[title_gesture] = {
-                GestureRange:new{
-                    ges = "tap",
-                    range = Geom:new{
-                        x = Size.padding.large + getButtonWidth() * 2 + Size.padding.small + 2,
-                        y = row_y,
-                        w = title_width,
-                        h = getQuestRowHeight(),
-                    },
-                },
-            }
-            self.quests_widget["on" .. title_gesture] = function()
-                quests_module:showQuestActions(quest)
-                return true
-            end
-        end
-    end
-
-    -- Add button tap - use tracked position
-    self.quests_widget.ges_events.AddQuest = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = Size.padding.large,
-                y = self.add_button_y,
-                w = content_width,
-                h = getQuestRowHeight(),
-            },
-        },
-    }
-    self.quests_widget.onAddQuest = function()
-        quests_module:showAddQuestDialog()
-        return true
-    end
-
-    -- Swipe to close (leave top 10% for KOReader menu)
-    local top_safe_zone = math.floor(screen_height * 0.1)
-    self.quests_widget.ges_events.Swipe = {
-        GestureRange:new{
-            ges = "swipe",
-            range = Geom:new{
-                x = 0,
-                y = top_safe_zone,
-                w = screen_width - Navigation.TAB_WIDTH,
-                h = screen_height - top_safe_zone,
-            },
-        },
-    }
-    self.quests_widget.onSwipe = function(_, _, ges)
-        if ges.direction == "east" then
-            UIManager:close(quests_module.quests_widget)
-            return true
-        end
-        return false
+        self:showQuestsView()
     end
 end
+
 
 --[[--
 Show actions for a quest (edit, delete, view details).
@@ -896,12 +583,9 @@ end
 Toggle quest completion status.
 --]]
 function Quests:toggleQuestComplete(quest)
+    local was_completed = quest.completed
     if quest.completed then
         Data:uncompleteQuest(self.current_type, quest.id)
-        UIManager:show(InfoMessage:new{
-            text = _("Quest marked incomplete"),
-            timeout = 1,
-        })
     else
         local today = Data:getCurrentDate()
         local quests = Data:loadAllQuests()
@@ -928,17 +612,24 @@ function Quests:toggleQuestComplete(quest)
 
         self:updateDailyLog()
         self:updateGlobalStreak()
-
-        UIManager:show(InfoMessage:new{
-            text = _("Quest completed!"),
-            timeout = 1,
-        })
     end
 
     -- Refresh
     UIManager:close(self.quests_widget)
     self:showQuestsView()
     UIManager:setDirty("all", "ui")
+
+    -- Show feedback
+    UIManager:nextTick(function()
+        if was_completed then
+            UIManager:show(InfoMessage:new{
+                text = _("Quest marked incomplete"),
+                timeout = 1,
+            })
+        else
+            Celebration:showCompletion()
+        end
+    end)
 end
 
 --[[--
@@ -973,18 +664,18 @@ Increment progress for a progressive quest.
 function Quests:incrementQuestProgress(quest)
     local updated = Data:incrementQuestProgress(self.current_type, quest.id)
     if updated then
-        if updated.completed then
-            self:updateDailyLog()
-            self:updateGlobalStreak()
-            UIManager:show(InfoMessage:new{
-                text = _("Quest completed!"),
-                timeout = 1,
-            })
-        end
         -- Refresh
         UIManager:close(self.quests_widget)
         self:showQuestsView()
         UIManager:setDirty("all", "ui")
+
+        if updated.completed then
+            self:updateDailyLog()
+            self:updateGlobalStreak()
+            UIManager:nextTick(function()
+                Celebration:showCompletion()
+            end)
+        end
     end
 end
 
@@ -1035,21 +726,20 @@ function Quests:showProgressInput(quest)
                         return
                     end
                     local updated = Data:setQuestProgress(self.current_type, quest.id, math.floor(value))
-                    if updated then
-                        if updated.completed then
-                            self:updateDailyLog()
-                            self:updateGlobalStreak()
-                            UIManager:show(InfoMessage:new{
-                                text = _("Quest completed!"),
-                                timeout = 1,
-                            })
-                        end
-                    end
+                    local quest_completed = updated and updated.completed
                     UIManager:close(dialog)
                     -- Refresh
                     UIManager:close(self.quests_widget)
                     self:showQuestsView()
                     UIManager:setDirty("all", "ui")
+
+                    if quest_completed then
+                        self:updateDailyLog()
+                        self:updateGlobalStreak()
+                        UIManager:nextTick(function()
+                            Celebration:showCompletion()
+                        end)
+                    end
                 end,
             },
         }},
@@ -1361,7 +1051,7 @@ function Quests:showQuestTypeSelector(is_edit)
         title = _("How do you complete this quest?"),
         buttons = {
             {{
-                text = self.new_quest.is_progressive and "[ ] " .. _("One-time (OK/Skip)") or "[X] " .. _("One-time (OK/Skip)"),
+                text = self.new_quest.is_progressive and "[ ] " .. _("One-time (Done/Skip)") or "[X] " .. _("One-time (Done/Skip)"),
                 callback = function()
                     self.new_quest.is_progressive = false
                     UIManager:close(dialog)

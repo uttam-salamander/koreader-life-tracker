@@ -6,6 +6,7 @@ Manages user preferences for energy categories, time slots, and display options.
 --]]
 
 local ButtonDialog = require("ui/widget/buttondialog")
+local ConfirmBox = require("ui/widget/confirmbox")
 local InputDialog = require("ui/widget/inputdialog")
 local InfoMessage = require("ui/widget/infomessage")
 local Menu = require("ui/widget/menu")
@@ -650,11 +651,12 @@ function Settings:createBackup(ui)
     local ok, result = Data:exportBackupToFile()
 
     if ok then
-        -- Extract just the filename for display
+        -- Extract filename and show backup location
         local filename = result:match("([^/]+)$")
+        local backup_dir = Data:getBackupDir()
         UIManager:show(InfoMessage:new{
-            text = _("Backup created successfully!\n\nFile: ") .. filename,
-            timeout = 5,
+            text = _("Backup created successfully!\n\nFile: ") .. filename .. _("\n\nLocation: ") .. backup_dir,
+            timeout = 6,
         })
     else
         UIManager:show(InfoMessage:new{
@@ -684,7 +686,7 @@ function Settings:showRestoreMenu(ui)
     local menu
     local navigating_away = false  -- Flag to prevent close_callback from showing settings
 
-    for __, backup in ipairs(backups) do
+    for _idx, backup in ipairs(backups) do
         -- Format size in KB
         local size_kb = string.format("%.1f KB", (backup.size or 0) / 1024)
         table.insert(items, {
@@ -753,78 +755,58 @@ end
 Confirm restoration from a backup.
 --]]
 function Settings:confirmRestore(ui, backup)
-    local dialog
-    dialog = ButtonDialog:new{
-        title = _("Restore from backup?\n\nThis will replace all current data with:\n") .. backup.created_at,
-        buttons = {
-            {{
-                text = _("Cancel"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:showRestoreMenu(ui)
-                end,
-            }},
-            {{
-                text = _("Restore"),
-                callback = function()
-                    UIManager:close(dialog)
-                    local ok, result = Data:importBackupFromFile(backup.filepath)
-                    if ok then
-                        UIManager:show(InfoMessage:new{
-                            text = _("Data restored successfully!"),
-                            timeout = 3,
-                        })
-                    else
-                        UIManager:show(InfoMessage:new{
-                            text = _("Restore failed: ") .. (result or "Unknown error"),
-                            timeout = 5,
-                        })
-                    end
-                    self:show(ui)
-                end,
-            }},
-        },
-    }
-    UIManager:show(dialog)
+    UIManager:show(ConfirmBox:new{
+        text = _("Restore from backup?\n\nThis will replace all current data with:\n") .. backup.created_at,
+        ok_text = _("Restore"),
+        cancel_text = _("Cancel"),
+        ok_callback = function()
+            local ok, result = Data:importBackupFromFile(backup.filepath)
+            if ok then
+                UIManager:show(InfoMessage:new{
+                    text = _("Data restored successfully!"),
+                    timeout = 3,
+                })
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Restore failed: ") .. (result or "Unknown error"),
+                    timeout = 5,
+                })
+            end
+            self:show(ui)
+        end,
+        cancel_callback = function()
+            self:showRestoreMenu(ui)
+        end,
+    })
 end
 
 --[[--
 Confirm deletion of a backup file.
 --]]
 function Settings:confirmDeleteBackup(ui, backup)
-    local dialog
-    dialog = ButtonDialog:new{
-        title = _("Delete backup?"),
-        buttons = {
-            {{
-                text = _("Cancel"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:showRestoreMenu(ui)
-                end,
-            }},
-            {{
-                text = _("Delete"),
-                callback = function()
-                    UIManager:close(dialog)
-                    local ok = Data:deleteBackup(backup.filepath)
-                    if ok then
-                        UIManager:show(InfoMessage:new{
-                            text = _("Backup deleted"),
-                            timeout = 2,
-                        })
-                    else
-                        UIManager:show(InfoMessage:new{
-                            text = _("Failed to delete backup"),
-                            timeout = 3,
-                        })
-                    end
-                    self:showRestoreMenu(ui)
-                end,
-            }},
-        },
-    }
-    UIManager:show(dialog)
+    UIManager:show(ConfirmBox:new{
+        text = _("Delete backup?\n\n") .. backup.created_at,
+        ok_text = _("Delete"),
+        cancel_text = _("Cancel"),
+        ok_callback = function()
+            local ok = Data:deleteBackup(backup.filepath)
+            if ok then
+                UIManager:show(InfoMessage:new{
+                    text = _("Backup deleted"),
+                    timeout = 2,
+                })
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Failed to delete backup"),
+                    timeout = 3,
+                })
+            end
+            self:showRestoreMenu(ui)
+        end,
+        cancel_callback = function()
+            self:showRestoreMenu(ui)
+        end,
+    })
 end
 
 --[[--

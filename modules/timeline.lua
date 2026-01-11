@@ -5,11 +5,11 @@ Visual day view with quests grouped by time-of-day slots.
 --]]
 
 local Blitbuffer = require("ffi/blitbuffer")
+local Button = require("ui/widget/button")
 local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local DateTimeWidget = require("ui/widget/datetimewidget")
 local Device = require("device")
-local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -33,6 +33,8 @@ local _ = require("gettext")
 local Data = require("modules/data")
 local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
+local UIHelpers = require("modules/ui_helpers")
+local Celebration = require("modules/celebration")
 
 local Timeline = {}
 
@@ -51,35 +53,6 @@ end
 
 local function getProgressWidth()
     return UIConfig:dim("progress_width")
-end
-
---[[--
-Dispatch a corner gesture to the user's configured action.
-@tparam string gesture_name The gesture name (e.g., "tap_top_left_corner")
-@treturn bool True if gesture was handled
---]]
-function Timeline:dispatchCornerGesture(gesture_name)
-    if self.ui and self.ui.gestures then
-        local gesture_manager = self.ui.gestures
-        local settings = gesture_manager.gestures or {}
-        local action = settings[gesture_name]
-        if action then
-            local Dispatcher = require("dispatcher")
-            Dispatcher:execute(action)
-            return true
-        end
-    end
-
-    -- Fallback to common corner actions
-    if gesture_name == "tap_top_right_corner" then
-        self.ui:handleEvent(Event:new("ToggleFrontlight"))
-        return true
-    elseif gesture_name == "tap_top_left_corner" then
-        self.ui:handleEvent(Event:new("ToggleBookmark"))
-        return true
-    end
-
-    return false
 end
 
 --[[--
@@ -149,8 +122,8 @@ function Timeline:showTimelineView()
     local screen_height = Screen:getHeight()
     local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
 
-    -- KOReader reserves top 1/8 (12.5%) for menu gesture
-    local top_safe_zone = math.floor(screen_height / 8)
+    -- KOReader reserves top ~10% for menu gesture
+    local top_safe_zone = UIConfig:getTopSafeZone()
 
     local content = VerticalGroup:new{ align = "left" }
 
@@ -271,11 +244,8 @@ function Timeline:showTimelineView()
     local total_quests = 0
     local completed_quests = 0
 
-    -- Store quest positions for tap handling
-    self.quest_touch_areas = {}
-
     -- Build time slot sections
-    for __, slot in ipairs(time_slots) do
+    for _idx, slot in ipairs(time_slots) do
         local slot_quests = self:getQuestsForSlot(today_quests, slot)
         total_quests = total_quests + #slot_quests
 
@@ -311,20 +281,13 @@ function Timeline:showTimelineView()
             })
             self.current_y = self.current_y + 20
         else
-            for __, quest in ipairs(slot_quests) do
+            for _idx, quest in ipairs(slot_quests) do
                 if quest.completed then
                     completed_quests = completed_quests + 1
                 end
 
-                -- Build modern quest row with OK/Skip buttons
+                -- Build quest row with Button widgets (tap handling is built-in)
                 local quest_row = self:buildQuestRow(quest, content_width)
-
-                -- Store quest info with Y position for tap handling
-                table.insert(self.quest_touch_areas, {
-                    quest = quest,
-                    y = self.current_y,
-                })
-
                 table.insert(content, quest_row)
                 self.current_y = self.current_y + getTouchTargetHeight() + 2
             end
@@ -408,11 +371,11 @@ function Timeline:showTimelineView()
     -- Store top_safe_zone for gesture handlers
     self.top_safe_zone = top_safe_zone
 
-    -- Setup quest tap handlers (below top zone)
-    self:setupQuestTapHandlers()
+    -- Quest buttons use Button widgets with built-in callbacks - no separate handlers needed
 
     -- Date navigation tap handlers
     -- Nav row is BELOW top_safe_zone to avoid corner gesture conflicts
+    -- NOTE: self.nav_row_y is already in screen coordinates (self.current_y starts at Size.padding.large)
     local nav_row_y = self.nav_row_y
     local nav_row_height = getTouchTargetHeight()
 
@@ -467,76 +430,18 @@ function Timeline:showTimelineView()
         return true
     end
 
-    -- KOReader gesture zone dimensions
-    local corner_size = math.floor(screen_width / 8)
-    local corner_height = math.floor(screen_height / 8)
-
-    -- Top CENTER zone - Opens KOReader menu
-    self.timeline_widget.ges_events.TopCenterTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{
-                x = corner_size,
-                y = 0,
-                w = screen_width - corner_size * 2,
-                h = top_safe_zone,
-            },
-        },
+    -- Setup corner gesture handlers using shared helper
+    local gesture_dims = {
+        screen_width = screen_width,
+        screen_height = screen_height,
+        top_safe_zone = top_safe_zone,
     }
-    self.timeline_widget.onTopCenterTap = function()
-        if self.ui and self.ui.menu then
-            self.ui.menu:onShowMenu()
-        else
-            self.ui:handleEvent(Event:new("ShowReaderMenu"))
-        end
-        return true
-    end
+    UIHelpers.setupCornerGestures(self.timeline_widget, self, gesture_dims)
 
-    -- Corner tap handlers
-    self.timeline_widget.ges_events.TopLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.timeline_widget.onTopLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_left_corner")
-    end
-
-    self.timeline_widget.ges_events.TopRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = 0, w = corner_size, h = corner_height },
-        },
-    }
-    self.timeline_widget.onTopRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_top_right_corner")
-    end
-
-    self.timeline_widget.ges_events.BottomLeftCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = 0, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.timeline_widget.onBottomLeftCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_left_corner")
-    end
-
-    self.timeline_widget.ges_events.BottomRightCornerTap = {
-        GestureRange:new{
-            ges = "tap",
-            range = Geom:new{ x = screen_width - corner_size, y = screen_height - corner_height, w = corner_size, h = corner_height },
-        },
-    }
-    self.timeline_widget.onBottomRightCornerTap = function()
-        return self:dispatchCornerGesture("tap_bottom_right_corner")
-    end
-
+    -- Custom swipe handler for day navigation (not close)
     self.timeline_widget.ges_events.Swipe = {
         GestureRange:new{
             ges = "swipe",
-            -- Only capture swipes below top 1/8 zone
             range = Geom:new{
                 x = 0,
                 y = top_safe_zone,
@@ -567,12 +472,19 @@ local PROGRESS_WIDTH = getProgressWidth()  -- Matches dashboard for consistent t
 
 --[[--
 Build a single quest row with OK/Skip buttons (binary) or +/- buttons (progressive).
-Progressive layout: [−] [3/10] [+] [Title] - matches Dashboard/Quests for consistency.
+Uses Button widgets with callbacks for tap handling.
+For skipped quests, shows "Unskip" button instead of "Skip".
 --]]
 function Timeline:buildQuestRow(quest, content_width)
     local today = os.date("%Y-%m-%d")
-    local status_bg = quest.completed and Blitbuffer.gray(0.9) or Blitbuffer.COLOR_WHITE
-    local text_color = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK
+    local colors = UIConfig:getColors()
+    local timeline = self
+
+    local status_bg = (quest.completed and colors.completed_bg) or colors.background
+    local text_color = (quest.completed and colors.muted) or colors.foreground
+
+    -- Check if this quest is skipped for today
+    local is_skipped = (quest.skipped_date == today)
 
     -- Check if progressive quest needs daily reset
     if quest.is_progressive and quest.progress_last_date ~= today then
@@ -580,11 +492,11 @@ function Timeline:buildQuestRow(quest, content_width)
     end
 
     local row
+    local BUTTON_GAP = 2
 
     if quest.is_progressive then
-        -- Progressive quest layout: [−] [3/10] [+] [Title] (matches Dashboard/Quests)
-        -- Total buttons/spans: scaled values for button and progress widths
-        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - 4 - Size.padding.small
+        -- Progressive quest layout: [−] [3/10] [+] [Title]
+        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - BUTTON_GAP * 2 - Size.padding.small
 
         local title_widget = TextWidget:new{
             text = quest.title,
@@ -593,24 +505,23 @@ function Timeline:buildQuestRow(quest, content_width)
             max_width = title_width - Size.padding.small * 2,
         }
 
-        -- Minus button
-        local minus_button = FrameContainer:new{
+        -- Minus button with callback
+        local minus_button = Button:new{
+            text = "−",
             width = SMALL_BUTTON_WIDTH,
-            height = getTouchTargetHeight() - 4,
-            padding = 2,
+            max_width = SMALL_BUTTON_WIDTH,
             bordersize = 1,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getTouchTargetHeight() - 10},
-                TextWidget:new{
-                    text = "−",
-                    face = Font:getFace("cfont", 16),
-                    bold = true,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 16,
+            text_font_bold = true,
+            callback = function()
+                timeline:decrementQuestProgress(quest)
+            end,
         }
 
-        -- Progress display
+        -- Progress display (non-interactive)
         local current = quest.progress_current or 0
         local target = quest.progress_target or 1
         local pct = math.min(1, current / target)
@@ -633,29 +544,29 @@ function Timeline:buildQuestRow(quest, content_width)
             },
         }
 
-        -- Plus button
-        local plus_button = FrameContainer:new{
+        -- Plus button with callback
+        local plus_button = Button:new{
+            text = "+",
             width = SMALL_BUTTON_WIDTH,
-            height = getTouchTargetHeight() - 4,
-            padding = 2,
+            max_width = SMALL_BUTTON_WIDTH,
             bordersize = 1,
-            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = SMALL_BUTTON_WIDTH - 6, h = getTouchTargetHeight() - 10},
-                TextWidget:new{
-                    text = "+",
-                    face = Font:getFace("cfont", 16),
-                    bold = true,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 16,
+            text_font_bold = true,
+            enabled = not quest.completed,
+            callback = function()
+                timeline:incrementQuestProgress(quest)
+            end,
         }
 
         row = HorizontalGroup:new{
             align = "center",
             minus_button,
-            HorizontalSpan:new{ width = 2 },
+            HorizontalSpan:new{ width = BUTTON_GAP },
             progress_display,
-            HorizontalSpan:new{ width = 2 },
+            HorizontalSpan:new{ width = BUTTON_GAP },
             plus_button,
             HorizontalSpan:new{ width = Size.padding.small },
             FrameContainer:new{
@@ -668,8 +579,8 @@ function Timeline:buildQuestRow(quest, content_width)
             },
         }
     else
-        -- Binary quest layout: [OK] [Skip] [Title]
-        local title_width = content_width - getButtonWidth() * 2 - Size.padding.small * 3
+        -- Binary quest layout: [Done] [Skip/Unskip] [Title]
+        local title_width = content_width - getButtonWidth() * 2 - BUTTON_GAP - Size.padding.small
 
         local title_widget = TextWidget:new{
             text = quest.title,
@@ -678,38 +589,42 @@ function Timeline:buildQuestRow(quest, content_width)
             max_width = title_width - Size.padding.small * 2,
         }
 
-        -- Complete button (OK or X if already completed)
-        local complete_text = quest.completed and "X" or "OK"
-        local complete_button = FrameContainer:new{
+        -- Complete button with callback
+        local complete_text = quest.completed and "X" or "Done"
+        local complete_button = Button:new{
+            text = complete_text,
             width = getButtonWidth(),
-            height = getTouchTargetHeight() - 4,
-            padding = 2,
+            max_width = getButtonWidth(),
             bordersize = 1,
-            background = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
-                TextWidget:new{
-                    text = complete_text,
-                    face = Font:getFace("cfont", 12),
-                    bold = true,
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 12,
+            text_font_bold = true,
+            callback = function()
+                timeline:toggleQuestComplete(quest)
+            end,
         }
 
-        -- Skip button
-        local skip_button = FrameContainer:new{
+        -- Skip/Unskip button with callback
+        local skip_text = is_skipped and "Undo" or "Skip"
+        local skip_button = Button:new{
+            text = skip_text,
             width = getButtonWidth(),
-            height = getTouchTargetHeight() - 4,
-            padding = 2,
+            max_width = getButtonWidth(),
             bordersize = 1,
-            background = Blitbuffer.COLOR_WHITE,
-            CenterContainer:new{
-                dimen = Geom:new{w = getButtonWidth() - 6, h = getTouchTargetHeight() - 10},
-                TextWidget:new{
-                    text = "Skip",
-                    face = Font:getFace("cfont", 10),
-                },
-            },
+            margin = 0,
+            padding = Size.padding.small,
+            text_font_face = "cfont",
+            text_font_size = 10,
+            text_font_bold = false,
+            callback = function()
+                if is_skipped then
+                    timeline:unskipQuest(quest)
+                else
+                    timeline:skipQuest(quest)
+                end
+            end,
         }
 
         row = HorizontalGroup:new{
@@ -737,73 +652,6 @@ function Timeline:buildQuestRow(quest, content_width)
         background = status_bg,
         row,
     }
-end
-
---[[--
-Setup tap handlers for quest items.
-Handles both binary (OK/Skip) and progressive (+/-) quest layouts.
-Progressive layout matches Dashboard/Quests for cross-screen consistency.
---]]
-function Timeline:setupQuestTapHandlers()
-    local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
-
-    for idx, quest_info in ipairs(self.quest_touch_areas) do
-        local row_y = quest_info.y
-
-        -- Single tap handler for entire row - determine action by X position
-        local row_gesture = "QuestRow_" .. idx
-        self.timeline_widget.ges_events[row_gesture] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = Size.padding.large,
-                    y = row_y,
-                    w = content_width,
-                    h = getTouchTargetHeight(),
-                },
-            },
-        }
-
-        local timeline = self
-        local quest = quest_info.quest
-
-        self.timeline_widget["on" .. row_gesture] = function(_, _, ges)
-            local tap_x = ges.pos.x - Size.padding.large
-
-            if quest.is_progressive then
-                -- Progressive quest layout: [−](35) [progress](60) [+](35) [Title]
-                -- Matches Dashboard/Quests layout (no Skip button)
-                if tap_x < SMALL_BUTTON_WIDTH then
-                    -- Minus button
-                    timeline:decrementQuestProgress(quest)
-                elseif tap_x < SMALL_BUTTON_WIDTH + 2 + PROGRESS_WIDTH then
-                    -- Progress display - show manual input
-                    timeline:showProgressInput(quest)
-                elseif tap_x < SMALL_BUTTON_WIDTH * 2 + 4 + PROGRESS_WIDTH then
-                    -- Plus button
-                    timeline:incrementQuestProgress(quest)
-                else
-                    -- Title area - show quest actions menu
-                    timeline:showQuestActions(quest)
-                end
-            else
-                -- Binary quest: Buttons are on LEFT: OK (0-11%), Skip (11-22%), Title (22%+)
-                local tap_percent = tap_x / content_width
-
-                if tap_percent < 0.11 then
-                    -- Leftmost ~11% = OK button
-                    timeline:toggleQuestComplete(quest)
-                elseif tap_percent < 0.22 then
-                    -- Next ~11% = Skip button
-                    timeline:skipQuest(quest)
-                else
-                    -- Right 78% = Title area
-                    timeline:showQuestActions(quest)
-                end
-            end
-            return true
-        end
-    end
 end
 
 --[[--
@@ -853,14 +701,12 @@ function Timeline:toggleQuestComplete(quest)
         if quest_type then break end
     end
 
-    local message
+    local was_completed = quest.completed
     if quest_type then
         if quest.completed then
             Data:uncompleteQuest(quest_type, quest.id)
-            message = _("Quest marked incomplete")
         else
             Data:completeQuest(quest_type, quest.id)
-            message = _("Quest completed!")
         end
 
         -- Refresh timeline
@@ -874,10 +720,14 @@ function Timeline:toggleQuestComplete(quest)
 
         -- Show feedback
         UIManager:nextTick(function()
-            UIManager:show(InfoMessage:new{
-                text = message,
-                timeout = 1,
-            })
+            if was_completed then
+                UIManager:show(InfoMessage:new{
+                    text = _("Quest marked incomplete"),
+                    timeout = 1,
+                })
+            else
+                Celebration:showCompletion()
+            end
         end)
     end
 end
@@ -924,6 +774,46 @@ function Timeline:skipQuest(quest)
 end
 
 --[[--
+Unskip a quest (restore it to dashboard).
+--]]
+function Timeline:unskipQuest(quest)
+    local all_quests = Data:loadAllQuests()
+    local quest_type = nil
+
+    for qtype, quests in pairs(all_quests) do
+        for _idx, q in ipairs(quests) do
+            if q.id == quest.id then
+                q.skipped_date = nil  -- Clear skipped status
+                quest_type = qtype
+                break
+            end
+        end
+        if quest_type then break end
+    end
+
+    if quest_type then
+        Data:saveAllQuests(all_quests)
+
+        -- Refresh timeline
+        if self.timeline_widget then
+            UIManager:close(self.timeline_widget)
+        end
+        self:showTimelineView()
+
+        -- Force screen refresh
+        UIManager:setDirty("all", "ui")
+
+        -- Show feedback
+        UIManager:nextTick(function()
+            UIManager:show(InfoMessage:new{
+                text = _("Quest restored to dashboard"),
+                timeout = 1,
+            })
+        end)
+    end
+end
+
+--[[--
 Increment progress for a progressive quest.
 --]]
 function Timeline:incrementQuestProgress(quest)
@@ -932,7 +822,7 @@ function Timeline:incrementQuestProgress(quest)
     local quest_type = nil
 
     for qtype, quests in pairs(all_quests) do
-        for _, q in ipairs(quests) do
+        for _idx, q in ipairs(quests) do
             if q.id == quest.id then
                 quest_type = qtype
                 break
@@ -953,10 +843,7 @@ function Timeline:incrementQuestProgress(quest)
 
             if updated.completed then
                 UIManager:nextTick(function()
-                    UIManager:show(InfoMessage:new{
-                        text = _("Quest completed!"),
-                        timeout = 1,
-                    })
+                    Celebration:showCompletion()
                 end)
             end
         end
@@ -972,7 +859,7 @@ function Timeline:decrementQuestProgress(quest)
     local quest_type = nil
 
     for qtype, quests in pairs(all_quests) do
-        for _, q in ipairs(quests) do
+        for _idx, q in ipairs(quests) do
             if q.id == quest.id then
                 quest_type = qtype
                 break
@@ -1003,7 +890,7 @@ function Timeline:showProgressInput(quest)
     local quest_type = nil
 
     for qtype, quests in pairs(all_quests) do
-        for _, q in ipairs(quests) do
+        for _idx, q in ipairs(quests) do
             if q.id == quest.id then
                 quest_type = qtype
                 break
