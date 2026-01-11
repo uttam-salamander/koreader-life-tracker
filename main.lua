@@ -38,6 +38,13 @@ function LifeTracker:init()
 
     -- Seed random number generator for unique ID generation
     math.randomseed(os.time())
+
+    -- Log initialization if debug mode is enabled
+    local data = self:getData()
+    if data.DEBUG then
+        local logger = require("logger")
+        logger.info("LifeTracker: Plugin initialized")
+    end
 end
 
 function LifeTracker:onDispatcherRegisterActions()

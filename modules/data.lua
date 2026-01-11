@@ -7,9 +7,35 @@ Handles saving and loading all plugin data using LuaSettings.
 
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
--- local logger = require("logger")  -- Available for debugging
 
 local Data = {}
+
+-- ============================================
+-- Debug Mode - Set to true for device testing
+-- Logs will appear in KOReader's crash.log or via SSH
+-- Location: koreader/crash.log on device
+-- ============================================
+Data.DEBUG = false  -- <<< SET TO true TO ENABLE LOGGING <<<
+
+function Data:log(message, ...)
+    if not self.DEBUG then return end
+    local logger = require("logger")
+    if select("#", ...) > 0 then
+        logger.info("LifeTracker:", message, ...)
+    else
+        logger.info("LifeTracker:", message)
+    end
+end
+
+function Data:logError(message, ...)
+    if not self.DEBUG then return end
+    local logger = require("logger")
+    if select("#", ...) > 0 then
+        logger.warn("LifeTracker ERROR:", message, ...)
+    else
+        logger.warn("LifeTracker ERROR:", message)
+    end
+end
 
 -- ============================================
 -- Helper Functions (DST-safe, validation, etc)
@@ -325,20 +351,25 @@ end
 -- ============================================
 
 function Data:loadAllQuests()
+    self:log("Loading all quests")
     local q = self:getQuests()
-    return {
+    local quests = {
         daily = q:readSetting("daily") or {},
         weekly = q:readSetting("weekly") or {},
         monthly = q:readSetting("monthly") or {},
     }
+    self:log("Loaded quests - daily:", #quests.daily, "weekly:", #quests.weekly, "monthly:", #quests.monthly)
+    return quests
 end
 
 function Data:saveAllQuests(quests)
+    self:log("Saving all quests - daily:", #(quests.daily or {}), "weekly:", #(quests.weekly or {}), "monthly:", #(quests.monthly or {}))
     local q = self:getQuests()
     q:saveSetting("daily", quests.daily)
     q:saveSetting("weekly", quests.weekly)
     q:saveSetting("monthly", quests.monthly)
     q:flush()
+    self:log("Quests saved successfully")
 end
 
 --[[--
