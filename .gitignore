@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Development files
+PLAN.md
+REFACTORING_PLAN.md
+TESTING.md
+CLAUDE.md
+
+# Test data
+mock_backup*.json
+Books/
+UI/
+
+# Claude Code
+.claude/
+
+# User data (created at runtime)
+lifetracker_data.lua
+lifetracker_settings.lua
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
