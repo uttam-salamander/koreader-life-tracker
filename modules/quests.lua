@@ -80,7 +80,7 @@ Build the quests view with proper navigation.
 function Quests:showQuestsView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local content_width = UIConfig:getScrollWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     -- Title can be in this zone (non-interactive), but gesture handlers must not be
@@ -176,11 +176,11 @@ function Quests:showQuestsView()
     }
     table.insert(content, add_button)
 
-    -- Wrap content
+    -- Wrap content (no padding - full-width)
     local padded_content = FrameContainer:new{
-        width = screen_width - Navigation.TAB_WIDTH - Size.padding.large,  -- Right padding from nav
+        width = UIConfig:getScrollWidth(),  -- Use centralized width calculation
         height = screen_height,
-        padding = Size.padding.large,
+        padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,
@@ -198,9 +198,18 @@ function Quests:showQuestsView()
     local tabs = Navigation:buildTabColumn("quests", screen_height)
     Navigation.on_tab_change = on_tab_change
 
-    -- Create main layout
+    -- Create main layout with full-screen white background to prevent bleed-through
+    local white_bg = FrameContainer:new{
+        width = screen_width,
+        height = screen_height,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{},  -- Empty child required by FrameContainer
+    }
     local main_layout = OverlapGroup:new{
         dimen = Geom:new{w = screen_width, h = screen_height},
+        white_bg,
         padded_content,
         RightContainer:new{
             dimen = Geom:new{w = screen_width, h = screen_height},

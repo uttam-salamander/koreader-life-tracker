@@ -227,6 +227,18 @@ function UIConfig:dim(name)
 end
 
 --[[--
+Get the available scroll width for content area next to navigation tabs.
+Left and right margins are equal - both come from FrameContainer padding.
+@treturn number Scroll width in pixels
+--]]
+function UIConfig:getScrollWidth()
+    local screen_width = Screen:getWidth()
+    local tab_width = self:dim("tab_width")
+    -- No extra padding - FrameContainer handles equal left/right margins
+    return screen_width - tab_width
+end
+
+--[[--
 Scale a pixel value based on screen DPI.
 Use this for custom values not in getDimensions().
 @tparam number pixels Base pixel value (designed for ~160 DPI)

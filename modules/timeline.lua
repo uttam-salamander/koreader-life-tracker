@@ -120,7 +120,7 @@ Groups quests by time slot (Morning, Afternoon, Evening, Night).
 function Timeline:showTimelineView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local content_width = UIConfig:getScrollWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     local top_safe_zone = UIConfig:getTopSafeZone()
@@ -181,12 +181,13 @@ function Timeline:showTimelineView()
         height = getTouchTargetHeight(),
         padding = Size.padding.small,
         bordersize = 1,
-        background = is_today and Blitbuffer.gray(0.95) or Blitbuffer.COLOR_WHITE,
+        background = is_today and Blitbuffer.gray(0.65) or Blitbuffer.COLOR_WHITE,  -- Visible gray for today
         CenterContainer:new{
             dimen = Geom:new{w = date_width - Size.padding.small * 2, h = getTouchTargetHeight() - Size.padding.small * 2},
             TextWidget:new{
                 text = header_text,
                 face = Font:getFace("cfont", 14),
+                fgcolor = Blitbuffer.COLOR_BLACK,  -- Explicit black text
                 bold = is_today,
             },
         },
@@ -230,7 +231,8 @@ function Timeline:showTimelineView()
     }
     self.nav_button_width = NAV_BUTTON_WIDTH
     self.date_display_width = date_width
-    self.nav_row_y = top_safe_zone  -- Y position of nav row (below top zone)
+    -- Y position of nav row in screen coordinates (account for frame padding)
+    self.nav_row_y = top_safe_zone + Size.padding.large
 
     table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
     self.current_y = self.current_y + UIConfig:spacing("md")
@@ -311,14 +313,13 @@ function Timeline:showTimelineView()
     })
 
     -- Wrap content in scrollable container
-    local scrollbar_width = ScrollableContainer:getScrollbarWidth()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
+    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
     local scroll_height = screen_height
 
     local inner_frame = FrameContainer:new{
-        width = scroll_width - scrollbar_width,
-        height = math.max(scroll_height, content:getSize().h + Size.padding.large * 2),
-        padding = Size.padding.large,
+        width = scroll_width,
+        height = math.max(scroll_height, content:getSize().h),
+        padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,
@@ -343,9 +344,18 @@ function Timeline:showTimelineView()
     local tabs = Navigation:buildTabColumn("timeline", screen_height)
     Navigation.on_tab_change = on_tab_change
 
-    -- Create the main layout with content and navigation
+    -- Create the main layout with full-screen white background to prevent bleed-through
+    local white_bg = FrameContainer:new{
+        width = screen_width,
+        height = screen_height,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{},  -- Empty child required by FrameContainer
+    }
     local main_layout = OverlapGroup:new{
         dimen = Geom:new{w = screen_width, h = screen_height},
+        white_bg,
         padded_content,
         RightContainer:new{
             dimen = Geom:new{w = screen_width, h = screen_height},
@@ -476,17 +486,18 @@ Uses Button widgets with callbacks for tap handling.
 For skipped quests, shows "Unskip" button instead of "Skip".
 --]]
 function Timeline:buildQuestRow(quest, content_width)
-    local today = os.date("%Y-%m-%d")
+    local view_date = self.view_date or os.date("%Y-%m-%d")
     local colors = UIConfig:getColors()
     local timeline = self
 
     local status_bg = (quest.completed and colors.completed_bg) or colors.background
     local text_color = (quest.completed and colors.muted) or colors.foreground
 
-    -- Check if this quest is skipped for today
-    local is_skipped = (quest.skipped_date == today)
+    -- Check if this quest is skipped for the viewed date
+    local is_skipped = (quest.skipped_date == view_date)
 
-    -- Check if progressive quest needs daily reset
+    -- Check if progressive quest needs daily reset (still uses actual today for reset logic)
+    local today = os.date("%Y-%m-%d")
     if quest.is_progressive and quest.progress_last_date ~= today then
         quest.progress_current = 0
     end
@@ -704,9 +715,11 @@ function Timeline:toggleQuestComplete(quest)
     local was_completed = quest.completed
     if quest_type then
         if quest.completed then
-            Data:uncompleteQuest(quest_type, quest.id)
+            -- Pass view_date so we uncomplete the specific date being viewed
+            Data:uncompleteQuest(quest_type, quest.id, self.view_date)
         else
-            Data:completeQuest(quest_type, quest.id)
+            -- Pass view_date so completion is recorded for the date being viewed
+            Data:completeQuest(quest_type, quest.id, self.view_date)
         end
 
         -- Refresh timeline
@@ -736,14 +749,15 @@ end
 Skip a quest for today.
 --]]
 function Timeline:skipQuest(quest)
-    local today = Data:getCurrentDate()
+    -- Use view_date so skip is recorded for the date being viewed
+    local skip_date = self.view_date or Data:getCurrentDate()
     local all_quests = Data:loadAllQuests()
     local quest_type = nil
 
     for qtype, quests in pairs(all_quests) do
         for _, q in ipairs(quests) do
             if q.id == quest.id then
-                q.skipped_date = today
+                q.skipped_date = skip_date
                 quest_type = qtype
                 break
             end
@@ -955,7 +969,6 @@ function Timeline:getQuestsForDate(date_str)
     local all_quests = Data:loadAllQuests()
     if not all_quests then return {} end
 
-    local today = os.date("%Y-%m-%d")
     local quests = {}
 
     -- Helper to clone quest with date-appropriate completion status
@@ -965,16 +978,8 @@ function Timeline:getQuestsForDate(date_str)
             clone[k] = v
         end
 
-        -- For past/future dates, check if completed_date matches view date
-        if date_str ~= today then
-            -- Only show completed if it was completed ON this date
-            if clone.completed and clone.completed_date == date_str then
-                clone.completed = true
-            else
-                clone.completed = false
-            end
-        end
-        -- For today: use current completion status as-is
+        -- Check if quest was completed ON this specific date using completion history
+        clone.completed = Data:isQuestCompletedOnDate(quest, date_str)
 
         return clone
     end

@@ -169,7 +169,7 @@ Show the main dashboard view.
 function Dashboard:showDashboardView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local content_width = UIConfig:getScrollWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     -- Title text can be in this zone (non-interactive), but gesture handlers must not be
@@ -410,29 +410,23 @@ function Dashboard:showDashboardView()
     end
 
     -- ===== Wrap content in scrollable container =====
-    -- Calculate visible scroll area (account for scrollbar)
-    local scrollbar_width = ScrollableContainer:getScrollbarWidth()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
-    local scroll_height = screen_height
+    local scroll_width = UIConfig:getScrollWidth()
 
-    -- Wrap content in a frame with padding and minimum height to fill viewport
-    -- Inner frame is narrower to leave room for scrollbar
+    -- Wrap content in scrollable frame (no padding - full-width content)
     local inner_frame = FrameContainer:new{
-        width = scroll_width - scrollbar_width,
-        height = math.max(scroll_height, content:getSize().h + Size.padding.large * 2),
-        padding = Size.padding.large,
+        width = scroll_width,
+        height = math.max(screen_height, content:getSize().h),
+        padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,
     }
 
-    -- Scrollable container as the outer wrapper
-    local padded_content = ScrollableContainer:new{
-        dimen = Geom:new{ w = scroll_width, h = scroll_height },
+    local scrollable = ScrollableContainer:new{
+        dimen = Geom:new{w = scroll_width, h = screen_height},
         inner_frame,
     }
-    -- Store reference to set show_parent after widget creation
-    self.scrollable_container = padded_content
+    self.scrollable_container = scrollable
 
     -- ===== Create main container with gestures =====
     local ui = self.ui
@@ -449,9 +443,19 @@ function Dashboard:showDashboardView()
     Navigation.on_tab_change = on_tab_change
 
     -- Create the main layout with content and navigation
+    -- Full-screen white background prevents underlying content from showing through scrollbar gaps
+    local white_bg = FrameContainer:new{
+        width = screen_width,
+        height = screen_height,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{},  -- Empty child required by FrameContainer
+    }
     local main_layout = OverlapGroup:new{
         dimen = Geom:new{w = screen_width, h = screen_height},
-        padded_content,
+        white_bg,
+        scrollable,
         RightContainer:new{
             dimen = Geom:new{w = screen_width, h = screen_height},
             tabs,
@@ -650,7 +654,7 @@ Build a single quest row for the dashboard with inline OK/Skip buttons.
 Uses proper Button widgets with callbacks for tap handling.
 --]]
 function Dashboard:buildQuestRow(quest, quest_type)
-    local content_width = Screen:getWidth() - Navigation.TAB_WIDTH - Size.padding.large * 2
+    local content_width = UIConfig:getScrollWidth()
     local today = os.date("%Y-%m-%d")
     local colors = UIConfig:getColors()
     local dashboard = self

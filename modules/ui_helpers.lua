@@ -226,14 +226,14 @@ function UIHelpers.buildMainLayout(content, tab_id, screen_dims, ui, on_close)
     local screen_width = screen_dims.screen_width
     local screen_height = screen_dims.screen_height
 
-    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
+    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
     local scroll_height = screen_height
 
-    -- Inner frame with padding
+    -- Inner frame with no padding (full-width content)
     local inner_frame = FrameContainer:new{
         width = scroll_width,
-        height = math.max(scroll_height, content:getSize().h + Size.padding.large * 2),
-        padding = Size.padding.large,
+        height = math.max(scroll_height, content:getSize().h),
+        padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,
@@ -296,7 +296,7 @@ function UIHelpers.buildPageHeader(title, options)
     local top_safe_zone = options.top_safe_zone or UIConfig:getTopSafeZone()
 
     local header = VerticalGroup:new{ align = "left" }
-    local visual_y = Size.padding.large
+    local visual_y = 0
 
     -- Main title
     local title_widget = TextWidget:new{

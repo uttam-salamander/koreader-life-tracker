@@ -37,6 +37,10 @@ local UIHelpers = require("modules/ui_helpers")
 
 local Read = {}
 
+-- Cover cache configuration
+local DataStorage = require("datastorage")
+local COVER_CACHE_DIR = DataStorage:getDataDir() .. "/plugins/lifetracker.koplugin/.covers"
+
 -- Grid configuration (scaled via UIConfig)
 local function getGridCols()
     return UIConfig:dim("grid_columns")
@@ -75,7 +79,216 @@ Show the read view.
 function Read:show(ui)
     self.ui = ui
     self.books = {}
+    self.cover_widgets = {}  -- Store references for lazy loading
     self:showReadView()
+end
+
+--[[--
+Ensure cover cache directory exists.
+@treturn string Cache directory path
+--]]
+function Read:ensureCacheDir()
+    local ok, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok then
+        ok, lfs = pcall(require, "lfs")
+    end
+    if ok and lfs then
+        local attr = lfs.attributes(COVER_CACHE_DIR)
+        if not attr then
+            -- Create parent directories if needed
+            local parent = COVER_CACHE_DIR:match("(.+)/[^/]+$")
+            if parent then
+                lfs.mkdir(parent)
+            end
+            lfs.mkdir(COVER_CACHE_DIR)
+        end
+    end
+    return COVER_CACHE_DIR
+end
+
+--[[--
+Generate a cache key from filepath.
+Uses a simple hash to create a filename-safe key.
+@param filepath string Full path to the book file
+@treturn string Cache key (filename safe)
+--]]
+function Read:getCacheKey(filepath)
+    if not filepath then return nil end
+    -- Simple hash: use last part of path + length
+    local filename = filepath:match("([^/]+)$") or filepath
+    -- Remove extension and sanitize
+    local base = filename:gsub("%.[^%.]+$", ""):gsub("[^%w]", "_"):sub(1, 40)
+    -- Add a simple checksum based on full path length and first/last chars
+    local checksum = #filepath
+    if #filepath > 1 then
+        checksum = checksum + filepath:byte(1) + filepath:byte(-1)
+    end
+    return string.format("%s_%d.png", base, checksum)
+end
+
+--[[--
+Get the full path for a cached cover.
+@param filepath string Full path to the book file
+@treturn string Full path to cached cover file
+--]]
+function Read:getCachedCoverPath(filepath)
+    local key = self:getCacheKey(filepath)
+    if not key then return nil end
+    return COVER_CACHE_DIR .. "/" .. key
+end
+
+--[[--
+Check if a cached cover exists.
+@param filepath string Full path to the book file
+@treturn boolean True if cached cover exists
+--]]
+function Read:hasCachedCover(filepath)
+    local cache_path = self:getCachedCoverPath(filepath)
+    if not cache_path then return false end
+
+    local ok, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok then
+        ok, lfs = pcall(require, "lfs")
+    end
+    if ok and lfs then
+        local attr = lfs.attributes(cache_path)
+        return attr ~= nil and attr.mode == "file"
+    end
+    return false
+end
+
+--[[--
+Save a blitbuffer cover image to cache.
+@param filepath string Full path to the book file
+@param bb BlitBuffer The cover image blitbuffer
+--]]
+function Read:saveCoverToCache(filepath, bb)
+    if not filepath or not bb then return end
+
+    self:ensureCacheDir()
+    local cache_path = self:getCachedCoverPath(filepath)
+    if not cache_path then return end
+
+    -- Use KOReader's Blitbuffer write function if available
+    local ok = pcall(function()
+        local png = require("ffi/png")
+        if png and png.encodeToFile then
+            png.encodeToFile(cache_path, bb)
+        end
+    end)
+
+    if not ok then
+        -- Fallback: try using bb's built-in save if available
+        pcall(function()
+            if bb.writePNG then
+                bb:writePNG(cache_path)
+            end
+        end)
+    end
+end
+
+--[[--
+Load a cover from cache.
+@param filepath string Full path to the book file
+@param width number Desired width
+@param height number Desired height
+@treturn Widget|nil ImageWidget if cached, nil otherwise
+--]]
+function Read:loadCoverFromCache(filepath, width, height)
+    if not self:hasCachedCover(filepath) then return nil end
+
+    local cache_path = self:getCachedCoverPath(filepath)
+    local ok, result = pcall(function()
+        return ImageWidget:new{
+            file = cache_path,
+            width = width,
+            height = height,
+            scale_factor = 0,
+            autostretch = true,
+        }
+    end)
+
+    if ok and result then
+        return result
+    end
+    return nil
+end
+
+--[[--
+Load covers asynchronously after initial render.
+Loads one cover at a time with small delays to keep UI responsive.
+--]]
+function Read:loadCoversAsync()
+    if not self.books or #self.books == 0 then return end
+    if not self.cover_widgets then return end
+
+    local book_index = 1
+    local function loadNextCover()
+        if book_index > #self.books then
+            -- All done, trigger a refresh
+            if self.read_widget then
+                UIManager:setDirty(self.read_widget, "ui")
+            end
+            return
+        end
+
+        local book = self.books[book_index]
+        local widget_ref = self.cover_widgets[book_index]
+
+        if book and book.file and widget_ref and widget_ref.cover_container then
+            -- Try cache first
+            local cover = self:loadCoverFromCache(book.file, widget_ref.width, widget_ref.height)
+
+            if not cover then
+                -- Extract cover from document (slow operation)
+                local cover_bb = nil
+                local ok, doc = pcall(function()
+                    return DocumentRegistry:openDocument(book.file)
+                end)
+
+                if ok and doc then
+                    pcall(function()
+                        if doc.getCoverPageImage then
+                            local cok, cover_result = pcall(doc.getCoverPageImage, doc)
+                            if cok and cover_result then
+                                cover_bb = cover_result
+                                -- Save to cache for next time
+                                self:saveCoverToCache(book.file, cover_bb)
+                            end
+                        end
+                    end)
+                    doc:close()
+                end
+
+                if cover_bb then
+                    cover = ImageWidget:new{
+                        image = cover_bb,
+                        width = widget_ref.width,
+                        height = widget_ref.height,
+                        scale_factor = 0,
+                        autostretch = true,
+                    }
+                end
+            end
+
+            -- Update the widget if we got a cover
+            if cover and widget_ref.cover_container then
+                -- Replace the placeholder with the real cover
+                widget_ref.cover_container[1] = cover
+                -- Trigger partial refresh for this area
+                if self.read_widget then
+                    UIManager:setDirty(self.read_widget, "ui")
+                end
+            end
+        end
+
+        book_index = book_index + 1
+        -- Schedule next cover load with a small delay
+        UIManager:scheduleIn(0.05, loadNextCover)
+    end
+
+    -- Start loading after a short delay to let initial render complete
+    UIManager:scheduleIn(0.1, loadNextCover)
 end
 
 --[[--
@@ -305,14 +518,35 @@ function Read:getCoverImage(filepath, width, height)
 end
 
 --[[--
-Create a book card widget.
+Create a book card widget with placeholder cover for lazy loading.
+@param book table Book info with file, title, progress
+@param card_width number Card width in pixels
+@param card_height number Card height in pixels
+@param book_index number Index of book for lazy loading reference
+@treturn Widget The book card widget
 --]]
-function Read:createBookCard(book, card_width, card_height)
+function Read:createBookCard(book, card_width, card_height, book_index)
     local title_height = 28
     local progress_height = getProgressBarHeight() + 2
     local cover_height = card_height - title_height - progress_height
 
-    local cover = self:getCoverImage(book.file, card_width, cover_height)
+    -- Create placeholder cover initially (will be replaced asynchronously)
+    local placeholder = self:createPlaceholderCover(card_width, cover_height)
+
+    -- Create a container that can hold the cover (for lazy update)
+    local cover_container = VerticalGroup:new{
+        align = "center",
+        placeholder,  -- This will be replaced with real cover
+    }
+
+    -- Store reference for lazy loading
+    if book_index and book.file then
+        self.cover_widgets[book_index] = {
+            cover_container = cover_container,
+            width = card_width,
+            height = cover_height,
+        }
+    end
 
     local title_text = book.title or "Unknown"
     if #title_text > 14 then
@@ -343,7 +577,7 @@ function Read:createBookCard(book, card_width, card_height)
     local card_content = VerticalGroup:new{
         align = "center",
     }
-    table.insert(card_content, cover)
+    table.insert(card_content, cover_container)
     table.insert(card_content, title_widget)
     table.insert(card_content, progress_widget)
 
@@ -558,7 +792,7 @@ function Read:createBookGrid(books, content_width)
             table.insert(row, HorizontalSpan:new{width = getCardSpacing()})
         end
 
-        local card = self:createBookCard(book, card_width, card_height)
+        local card = self:createBookCard(book, card_width, card_height, i)
         table.insert(row, card)
 
         local col = (i - 1) % getGridCols()
@@ -585,7 +819,7 @@ function Read:showReadView()
     local screen_height = Screen:getHeight()
 
     -- Calculate dimensions
-    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
+    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
     local scroll_height = screen_height
     local content_width = scroll_width - Size.padding.large * 3
 
@@ -629,11 +863,10 @@ function Read:showReadView()
     table.insert(content, VerticalSpan:new{width = Size.padding.large * 2})
 
     -- Wrap content in frame with minimum height to fill viewport
-    local scrollbar_width = ScrollableContainer:getScrollbarWidth()
     local inner_frame = FrameContainer:new{
-        width = scroll_width - scrollbar_width,
-        height = math.max(scroll_height, content:getSize().h + Size.padding.large * 2),
-        padding = Size.padding.large,
+        width = scroll_width,
+        height = math.max(scroll_height, content:getSize().h),
+        padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,
@@ -658,9 +891,18 @@ function Read:showReadView()
     local tabs = Navigation:buildTabColumn("read", screen_height)
     Navigation.on_tab_change = on_tab_change
 
-    -- Create main layout
+    -- Create main layout with full-screen white background to prevent bleed-through
+    local white_bg = FrameContainer:new{
+        width = screen_width,
+        height = screen_height,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{},  -- Empty child required by FrameContainer
+    }
     local main_layout = OverlapGroup:new{
         dimen = Geom:new{w = screen_width, h = screen_height},
+        white_bg,
         scrollable,
         RightContainer:new{
             dimen = Geom:new{w = screen_width, h = screen_height},
@@ -699,6 +941,9 @@ function Read:showReadView()
     end, gesture_dims)
 
     UIManager:show(self.read_widget)
+
+    -- Start loading covers asynchronously after initial render
+    self:loadCoversAsync()
 end
 
 --[[--

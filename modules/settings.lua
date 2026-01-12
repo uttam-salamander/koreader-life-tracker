@@ -102,7 +102,7 @@ function Settings:showSettingsView()
     local user_settings = Data:loadUserSettings()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local scroll_width = screen_width - Navigation.TAB_WIDTH - Size.padding.large  -- Right padding from nav
+    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
     local content_width = scroll_width - Size.padding.large * 3
     local button_width = content_width
 
@@ -141,6 +141,19 @@ function Settings:showSettingsView()
         padding = Size.padding.default,
         callback = function()
             self:showTimeSlotsMenu(self.ui, user_settings)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
+    table.insert(content, Button:new{
+        text = _("Quest Categories"),
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showQuestCategoriesMenu(self.ui, user_settings)
         end,
     })
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
@@ -292,12 +305,11 @@ function Settings:showSettingsView()
     -- Bottom padding
     table.insert(content, VerticalSpan:new{width = Size.padding.large * 2})
 
-    -- Wrap content in scrollable frame
-    local scrollbar_width = ScrollableContainer:getScrollbarWidth()
+    -- Wrap content in scrollable frame (no padding - full-width content)
     local inner_frame = FrameContainer:new{
-        width = scroll_width - scrollbar_width,
-        height = math.max(screen_height, content:getSize().h + Size.padding.large * 2),
-        padding = Size.padding.large,
+        width = scroll_width,
+        height = math.max(screen_height, content:getSize().h),
+        padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,
@@ -321,9 +333,18 @@ function Settings:showSettingsView()
     local tabs = Navigation:buildTabColumn(nil, screen_height)  -- nil = no active tab
     Navigation.on_tab_change = on_tab_change
 
-    -- Main layout
+    -- Main layout with full-screen white background to prevent bleed-through
+    local white_bg = FrameContainer:new{
+        width = screen_width,
+        height = screen_height,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{},  -- Empty child required by FrameContainer
+    }
     local main_layout = OverlapGroup:new{
         dimen = Geom:new{w = screen_width, h = screen_height},
+        white_bg,
         scrollable,
         RightContainer:new{
             dimen = Geom:new{w = screen_width, h = screen_height},
@@ -525,6 +546,168 @@ function Settings:addEnergyCategory(ui, user_settings)
                     end
                     UIManager:close(dialog)
                     self:showEnergyCategoriesMenu(ui, user_settings)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
+Show quest categories configuration.
+--]]
+function Settings:showQuestCategoriesMenu(ui, user_settings)
+    local items = {}
+
+    -- Current categories
+    for i, category in ipairs(user_settings.quest_categories) do
+        table.insert(items, {
+            text = category,
+            callback = function()
+                self:editQuestCategory(ui, user_settings, i)
+            end,
+        })
+    end
+
+    -- Add new category
+    table.insert(items, {
+        text = _("[+] Add Category"),
+        callback = function()
+            self:addQuestCategory(ui, user_settings)
+        end,
+    })
+
+    local menu
+    menu = Menu:new{
+        title = _("Quest Categories"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+--[[--
+Edit an existing quest category.
+--]]
+function Settings:editQuestCategory(ui, user_settings, index)
+    -- Bounds check
+    if index < 1 or index > #user_settings.quest_categories then return end
+    local current = user_settings.quest_categories[index]
+
+    local dialog
+    dialog = ButtonDialog:new{
+        title = current,
+        buttons = {
+            {{
+                text = _("Rename"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:renameQuestCategory(ui, user_settings, index)
+                end,
+            }},
+            {{
+                text = _("Delete"),
+                callback = function()
+                    UIManager:close(dialog)
+                    if #user_settings.quest_categories > 1 then
+                        table.remove(user_settings.quest_categories, index)
+                        Data:saveUserSettings(user_settings)
+                        UIManager:show(InfoMessage:new{
+                            text = _("Category deleted"),
+                            timeout = 2,
+                        })
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Cannot delete last category"),
+                            timeout = 2,
+                        })
+                    end
+                    self:showQuestCategoriesMenu(ui, user_settings)
+                end,
+            }},
+            {{
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showQuestCategoriesMenu(ui, user_settings)
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+--[[--
+Rename a quest category.
+--]]
+function Settings:renameQuestCategory(ui, user_settings, index)
+    -- Bounds check
+    if index < 1 or index > #user_settings.quest_categories then return end
+    local current = user_settings.quest_categories[index]
+
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Rename Category"),
+        input = current,
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showQuestCategoriesMenu(ui, user_settings)
+                end,
+            },
+            {
+                text = _("Save"),
+                is_enter_default = true,
+                callback = function()
+                    -- Sanitize input
+                    local new_name = Data:sanitizeTextInput(dialog:getInputText(), 50)
+                    if new_name and new_name ~= "" then
+                        user_settings.quest_categories[index] = new_name
+                        Data:saveUserSettings(user_settings)
+                    end
+                    UIManager:close(dialog)
+                    self:showQuestCategoriesMenu(ui, user_settings)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--[[--
+Add a new quest category.
+--]]
+function Settings:addQuestCategory(ui, user_settings)
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Add Quest Category"),
+        input = "",
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showQuestCategoriesMenu(ui, user_settings)
+                end,
+            },
+            {
+                text = _("Add"),
+                is_enter_default = true,
+                callback = function()
+                    -- Sanitize input
+                    local new_name = Data:sanitizeTextInput(dialog:getInputText(), 50)
+                    if new_name and new_name ~= "" then
+                        table.insert(user_settings.quest_categories, new_name)
+                        Data:saveUserSettings(user_settings)
+                    end
+                    UIManager:close(dialog)
+                    self:showQuestCategoriesMenu(ui, user_settings)
                 end,
             },
         }},

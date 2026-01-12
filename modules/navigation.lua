@@ -43,8 +43,14 @@ function Navigation:getTabWidth()
     return UIConfig:dim("tab_width")
 end
 
--- Legacy constant for backwards compatibility
-Navigation.TAB_WIDTH = 60  -- Will be overridden by getTabWidth() in new code
+-- Get scaled tab width - call this function instead of using TAB_WIDTH constant
+function Navigation:getScaledTabWidth()
+    return UIConfig:dim("tab_width")
+end
+
+-- Legacy constant - DEPRECATED, use getScaledTabWidth() or UIConfig:dim("tab_width")
+-- Setting to scaled value at load time (will be correct for current screen)
+Navigation.TAB_WIDTH = UIConfig:dim("tab_width")
 
 --[[--
 Create a wrapped content view with right-side tab navigation.
