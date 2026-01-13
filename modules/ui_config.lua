@@ -123,6 +123,14 @@ function UIConfig:getDimensions()
         return self._dimensions
     end
 
+    -- Check for high contrast setting
+    local Data = require("modules/data")
+    local user_settings = Data:loadUserSettings()
+    local high_contrast = user_settings.high_contrast == true
+
+    -- Border multiplier for high contrast (2x thicker)
+    local border_scale = high_contrast and 2 or 1
+
     self._dimensions = {
         -- Navigation
         tab_width = Screen:scaleBySize(60),
@@ -161,10 +169,10 @@ function UIConfig:getDimensions()
         title_height = Screen:scaleBySize(24),
         greeting_height = Screen:scaleBySize(30),
 
-        -- Borders
-        border_thin = Size.border.thin,
-        border_default = Size.border.default,
-        border_thick = Size.border.thick,
+        -- Borders (thicker in high contrast mode for better visibility)
+        border_thin = Size.border.thin * border_scale,
+        border_default = Size.border.default * border_scale,
+        border_thick = Size.border.thick * border_scale,
 
         -- Page-level padding (left/right padding for all content pages)
         page_padding = Screen:scaleBySize(12),
@@ -289,11 +297,22 @@ function UIConfig:spacing(name)
 end
 
 --[[--
-Invalidate cached dimensions (call on screen resize/rotation).
+Invalidate cached dimensions (call on screen resize/rotation or settings change).
 --]]
 function UIConfig:invalidateDimensions()
     self._dimensions = nil
     self._capabilities = nil  -- Screen dimensions may have changed
+    self._font_scale = nil    -- Font scale may depend on dimensions
+end
+
+--[[--
+Invalidate all cached values (call on settings change for full refresh).
+--]]
+function UIConfig:invalidateAll()
+    self._dimensions = nil
+    self._capabilities = nil
+    self._colors = nil
+    self._font_scale = nil
 end
 
 -- ============================================================================
@@ -310,32 +329,40 @@ function UIConfig:isNightMode()
 end
 
 --[[--
-Get the current color scheme based on night mode and device capabilities.
+Get the current color scheme based on night mode, device capabilities, and high contrast setting.
 @treturn table Color values for various UI elements
 --]]
 function UIConfig:getColors()
+    -- Check for high contrast setting
+    local Data = require("modules/data")
+    local user_settings = Data:loadUserSettings()
+    local high_contrast = user_settings.high_contrast == true
+
     -- Check if we need to regenerate colors
     local current_night_mode = self:isNightMode()
     local current_has_color = self:hasColorScreen()
 
     if self._colors
         and self._colors._night_mode == current_night_mode
-        and self._colors._has_color == current_has_color then
+        and self._colors._has_color == current_has_color
+        and self._colors._high_contrast == high_contrast then
         return self._colors
     end
 
     local colors = {
         _night_mode = current_night_mode,
         _has_color = current_has_color,
+        _high_contrast = high_contrast,
     }
 
     if current_night_mode then
         -- Night mode colors (inverted)
         colors.background = Blitbuffer.COLOR_BLACK
         colors.foreground = Blitbuffer.COLOR_WHITE
-        colors.secondary = Blitbuffer.gray(0.7)
-        colors.muted = Blitbuffer.gray(0.5)
-        colors.border = Blitbuffer.gray(0.3)
+        -- High contrast: use pure white/black, no grays for text
+        colors.secondary = high_contrast and Blitbuffer.COLOR_WHITE or Blitbuffer.gray(0.7)
+        colors.muted = high_contrast and Blitbuffer.gray(0.8) or Blitbuffer.gray(0.5)
+        colors.border = high_contrast and Blitbuffer.COLOR_WHITE or Blitbuffer.gray(0.3)
         colors.highlight_bg = Blitbuffer.COLOR_WHITE
         colors.highlight_fg = Blitbuffer.COLOR_BLACK
         colors.active_bg = Blitbuffer.COLOR_WHITE
@@ -343,22 +370,23 @@ function UIConfig:getColors()
         colors.inactive_bg = Blitbuffer.COLOR_BLACK
         colors.inactive_fg = Blitbuffer.COLOR_WHITE
         -- Subtle background for completed items
-        colors.completed_bg = Blitbuffer.gray(0.15)
+        colors.completed_bg = high_contrast and Blitbuffer.gray(0.2) or Blitbuffer.gray(0.15)
     else
         -- Day mode colors (normal)
         colors.background = Blitbuffer.COLOR_WHITE
         colors.foreground = Blitbuffer.COLOR_BLACK
-        colors.secondary = Blitbuffer.gray(0.3)
-        colors.muted = Blitbuffer.gray(0.5)
-        colors.border = Blitbuffer.gray(0.8)
+        -- High contrast: use pure black for text, stronger borders
+        colors.secondary = high_contrast and Blitbuffer.COLOR_BLACK or Blitbuffer.gray(0.3)
+        colors.muted = high_contrast and Blitbuffer.gray(0.2) or Blitbuffer.gray(0.5)
+        colors.border = high_contrast and Blitbuffer.COLOR_BLACK or Blitbuffer.gray(0.8)
         colors.highlight_bg = Blitbuffer.COLOR_BLACK
         colors.highlight_fg = Blitbuffer.COLOR_WHITE
         colors.active_bg = Blitbuffer.COLOR_BLACK
         colors.active_fg = Blitbuffer.COLOR_WHITE
         colors.inactive_bg = Blitbuffer.COLOR_WHITE
         colors.inactive_fg = Blitbuffer.COLOR_BLACK
-        -- Subtle background for completed items
-        colors.completed_bg = Blitbuffer.gray(0.97)
+        -- Subtle background for completed items (more visible in high contrast)
+        colors.completed_bg = high_contrast and Blitbuffer.gray(0.9) or Blitbuffer.gray(0.97)
     end
 
     -- Add color-specific values for color e-readers
@@ -436,23 +464,67 @@ end
 -- Font Scaling
 -- ============================================================================
 
+-- Cached font scale factor
+UIConfig._font_scale = nil
+
+--[[--
+Get the font scale factor from KOReader settings.
+Syncs with KOReader's "Menu Font Size" setting.
+@treturn number Scale factor (default 1.0)
+--]]
+function UIConfig:getFontScale()
+    -- Return cached value if available
+    if self._font_scale then
+        return self._font_scale
+    end
+
+    local scale = 1.0
+
+    -- Try to get KOReader's font size multiplier from G_reader_settings
+    local settings = _G.G_reader_settings
+    if settings then
+        -- KOReader stores font_size as a multiplier (0.8, 1.0, 1.2, etc.)
+        -- This is used for menu and UI text sizing
+        local font_size = settings:readSetting("font_size")
+        if font_size and type(font_size) == "number" then
+            -- KOReader font_size is typically in range 12-30, normalize to scale
+            -- Default KOReader font size is around 20
+            -- We want: 16 -> 0.8x, 20 -> 1.0x, 24 -> 1.2x
+            scale = font_size / 20
+            -- Clamp to reasonable range
+            scale = math.max(0.7, math.min(1.5, scale))
+        end
+
+        -- Also check for font_gamma which some KOReader versions use
+        local font_gamma = settings:readSetting("font_gamma")
+        if font_gamma and type(font_gamma) == "number" and font_gamma > 0 then
+            -- font_gamma is a multiplier, typically 1.0
+            -- Only apply if it's not the default
+            if math.abs(font_gamma - 1.0) > 0.01 then
+                scale = scale * font_gamma
+            end
+        end
+    end
+
+    self._font_scale = scale
+    return scale
+end
+
+--[[--
+Invalidate cached font scale (call when KOReader font settings change).
+--]]
+function UIConfig:invalidateFontScale()
+    self._font_scale = nil
+end
+
 --[[--
 Get a scaled font size.
-Respects user's font scaling preference if set.
+Respects KOReader's font size settings for consistency.
 @tparam number base_size Base font size (designed for ~160 DPI)
 @treturn number Scaled font size
 --]]
 function UIConfig:getFontSize(base_size)
-    -- Check for user font scaling preference
-    -- G_reader_settings is a KOReader global for user preferences
-    local settings = _G.G_reader_settings
-    local scale = 1.0
-
-    if settings then
-        scale = settings:readSetting("font_scaling") or 1.0
-    end
-
-    -- Apply scaling
+    local scale = self:getFontScale()
     return math.floor(base_size * scale)
 end
 

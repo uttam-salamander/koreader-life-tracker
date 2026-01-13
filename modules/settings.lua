@@ -222,25 +222,6 @@ function Settings:showSettingsView()
     })
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
 
-    -- Large Touch Targets toggle
-    local large_targets = user_settings.large_touch_targets == true
-    table.insert(content, Button:new{
-        text = large_targets and _("Large Touch Targets [ON]") or _("Large Touch Targets [OFF]"),
-        width = button_width,
-        text_font_face = "cfont",
-        text_font_size = UIConfig:fontSize("body"),
-        margin = Size.margin.small,
-        padding = Size.padding.default,
-        preselect = large_targets,
-        callback = function()
-            user_settings.large_touch_targets = not user_settings.large_touch_targets
-            Data:saveUserSettings(user_settings)
-            UIConfig:invalidateDimensions()
-            UIManager:close(self.settings_widget)
-            self:showSettingsView()
-        end,
-    })
-    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
 
     -- High Contrast Mode toggle
     local high_contrast = user_settings.high_contrast == true
@@ -255,7 +236,7 @@ function Settings:showSettingsView()
         callback = function()
             user_settings.high_contrast = not user_settings.high_contrast
             Data:saveUserSettings(user_settings)
-            UIConfig:updateColorScheme()
+            UIConfig:invalidateAll()  -- Refresh colors and dimensions (borders change too)
             UIManager:close(self.settings_widget)
             self:showSettingsView()
         end,
