@@ -255,7 +255,6 @@ function Data:loadUserSettings()
             today_date = s:readSetting("today_date"),
             lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
             sleep_screen_enabled = s:readSetting("sleep_screen_enabled") or false,
-            large_touch_targets = s:readSetting("large_touch_targets") or false,
             high_contrast = s:readSetting("high_contrast") or false,
             celebration = s:readSetting("celebration"),
             quotes = quotes,
@@ -279,7 +278,6 @@ function Data:saveUserSettings(user_settings)
     s:saveSetting("today_date", user_settings.today_date)
     s:saveSetting("lock_screen_dashboard", user_settings.lock_screen_dashboard)
     s:saveSetting("sleep_screen_enabled", user_settings.sleep_screen_enabled)
-    s:saveSetting("large_touch_targets", user_settings.large_touch_targets)
     s:saveSetting("high_contrast", user_settings.high_contrast)
     s:saveSetting("celebration", user_settings.celebration)
     s:saveSetting("quotes", user_settings.quotes)
@@ -344,6 +342,141 @@ function Data:savePersistentNotes(text)
     local s = self:getSettings()
     s:saveSetting("persistent_notes", text)
     s:flush()
+end
+
+-- ============================================
+-- Compact Date Storage Helpers
+-- ============================================
+-- Format: completions = { ["2024-01"] = {1, 2, 15}, ["2024-02"] = {1, 5} }
+-- This is ~60% more compact than storing full date strings in an array
+
+--[[--
+Parse a date string into year-month key and day number.
+@param date string Date in YYYY-MM-DD format
+@return string, number Year-month key (YYYY-MM) and day number (1-31)
+--]]
+function Data:parseDateToCompact(date)
+    if not date or type(date) ~= "string" then return nil, nil end
+    local year_month = date:sub(1, 7)  -- "YYYY-MM"
+    local day = tonumber(date:sub(9, 10))
+    return year_month, day
+end
+
+--[[--
+Check if a day exists in a compact completions table.
+@param completions table Compact format: {["YYYY-MM"] = {day1, day2, ...}}
+@param date string Date in YYYY-MM-DD format
+@return boolean True if date is in completions
+--]]
+function Data:isDateInCompletions(completions, date)
+    if not completions or type(completions) ~= "table" then return false end
+    local year_month, day = self:parseDateToCompact(date)
+    if not year_month or not day then return false end
+
+    local days = completions[year_month]
+    if not days then return false end
+
+    for _, d in ipairs(days) do
+        if d == day then return true end
+    end
+    return false
+end
+
+--[[--
+Add a date to a compact completions table.
+@param completions table Compact format (modified in place)
+@param date string Date in YYYY-MM-DD format
+@return boolean True if date was added (false if already existed)
+--]]
+function Data:addDateToCompletions(completions, date)
+    local year_month, day = self:parseDateToCompact(date)
+    if not year_month or not day then return false end
+
+    -- Initialize month array if needed
+    if not completions[year_month] then
+        completions[year_month] = {}
+    end
+
+    -- Check if already exists
+    for _, d in ipairs(completions[year_month]) do
+        if d == day then return false end
+    end
+
+    -- Add and keep sorted for efficient lookup
+    table.insert(completions[year_month], day)
+    table.sort(completions[year_month])
+    return true
+end
+
+--[[--
+Remove a date from a compact completions table.
+@param completions table Compact format (modified in place)
+@param date string Date in YYYY-MM-DD format
+@return boolean True if date was removed
+--]]
+function Data:removeDateFromCompletions(completions, date)
+    local year_month, day = self:parseDateToCompact(date)
+    if not year_month or not day then return false end
+
+    local days = completions[year_month]
+    if not days then return false end
+
+    for i, d in ipairs(days) do
+        if d == day then
+            table.remove(days, i)
+            -- Clean up empty month
+            if #days == 0 then
+                completions[year_month] = nil
+            end
+            return true
+        end
+    end
+    return false
+end
+
+--[[--
+Migrate old array format to compact format.
+@param old_dates table Array of date strings ["YYYY-MM-DD", ...]
+@return table Compact format {["YYYY-MM"] = {day1, day2, ...}}
+--]]
+function Data:migrateToCompactDates(old_dates)
+    local compact = {}
+    if not old_dates or type(old_dates) ~= "table" then
+        return compact
+    end
+
+    for _, date in ipairs(old_dates) do
+        if type(date) == "string" then
+            self:addDateToCompletions(compact, date)
+        end
+    end
+    return compact
+end
+
+--[[--
+Get the most recent completion date from compact format.
+@param completions table Compact format
+@return string|nil Most recent date in YYYY-MM-DD format, or nil
+--]]
+function Data:getMostRecentCompletion(completions)
+    if not completions or type(completions) ~= "table" then return nil end
+
+    -- Find the latest year-month
+    local latest_ym = nil
+    for ym, _ in pairs(completions) do
+        if not latest_ym or ym > latest_ym then
+            latest_ym = ym
+        end
+    end
+
+    if not latest_ym then return nil end
+
+    -- Find the latest day in that month
+    local days = completions[latest_ym]
+    if not days or #days == 0 then return nil end
+
+    local latest_day = days[#days]  -- Already sorted
+    return string.format("%s-%02d", latest_ym, latest_day)
 end
 
 -- ============================================
@@ -432,7 +565,7 @@ end
 
 --[[--
 Check if a quest is completed on a specific date.
-Uses completion_dates array for history tracking.
+Uses compact completions format for efficient storage.
 @param quest table Quest object
 @param date string Date in YYYY-MM-DD format
 @treturn boolean True if completed on that date
@@ -440,7 +573,12 @@ Uses completion_dates array for history tracking.
 function Data:isQuestCompletedOnDate(quest, date)
     if not quest or not date then return false end
 
-    -- Support both new array format and legacy single date format
+    -- New compact format: completions = {["YYYY-MM"] = {day1, day2, ...}}
+    if quest.completions and type(quest.completions) == "table" then
+        return self:isDateInCompletions(quest.completions, date)
+    end
+
+    -- Legacy array format: completed_dates = ["YYYY-MM-DD", ...]
     if quest.completed_dates and type(quest.completed_dates) == "table" then
         for _, d in ipairs(quest.completed_dates) do
             if d == date then return true end
@@ -448,13 +586,13 @@ function Data:isQuestCompletedOnDate(quest, date)
         return false
     end
 
-    -- Legacy fallback: single completed_date
+    -- Legacy single date format
     return quest.completed and quest.completed_date == date
 end
 
 --[[--
 Complete a quest for a specific date.
-Adds the date to the completion history.
+Uses compact storage format: {["YYYY-MM"] = {day1, day2, ...}}
 @param quest_type string "daily", "weekly", or "monthly"
 @param quest_id string Quest ID
 @param date string|nil Date to mark complete (defaults to today)
@@ -466,29 +604,23 @@ function Data:completeQuest(quest_type, quest_id, date)
 
     for _, quest in ipairs(quests[quest_type] or {}) do
         if quest.id == quest_id then
-            -- Initialize completed_dates array if needed
-            if not quest.completed_dates or type(quest.completed_dates) ~= "table" then
-                quest.completed_dates = {}
-                -- Migrate legacy data if exists
-                if quest.completed_date then
-                    table.insert(quest.completed_dates, quest.completed_date)
+            -- Migrate from old formats if needed
+            if not quest.completions then
+                quest.completions = {}
+                -- Migrate from old array format
+                if quest.completed_dates and type(quest.completed_dates) == "table" then
+                    quest.completions = self:migrateToCompactDates(quest.completed_dates)
+                    quest.completed_dates = nil  -- Remove old format
+                -- Migrate from legacy single date
+                elseif quest.completed_date then
+                    self:addDateToCompletions(quest.completions, quest.completed_date)
                 end
             end
 
-            -- Add date if not already in array
-            local already_completed = false
-            for _, d in ipairs(quest.completed_dates) do
-                if d == completion_date then
-                    already_completed = true
-                    break
-                end
-            end
+            -- Add date to compact completions
+            self:addDateToCompletions(quest.completions, completion_date)
 
-            if not already_completed then
-                table.insert(quest.completed_dates, completion_date)
-            end
-
-            -- Keep legacy fields for backwards compatibility
+            -- Keep legacy fields for backwards compatibility with other code
             quest.completed = true
             quest.completed_date = completion_date
 
@@ -513,24 +645,25 @@ function Data:uncompleteQuest(quest_type, quest_id, date)
 
     for _, quest in ipairs(quests[quest_type] or {}) do
         if quest.id == quest_id then
-            -- Remove date from completed_dates array
-            if quest.completed_dates and type(quest.completed_dates) == "table" then
-                for i, d in ipairs(quest.completed_dates) do
-                    if d == uncomplete_date then
-                        table.remove(quest.completed_dates, i)
-                        break
-                    end
-                end
+            -- Migrate from old formats if needed
+            if not quest.completions and quest.completed_dates then
+                quest.completions = self:migrateToCompactDates(quest.completed_dates)
+                quest.completed_dates = nil
             end
 
-            -- Update legacy fields
-            -- Only clear completed if no dates remain
-            if not quest.completed_dates or #quest.completed_dates == 0 then
+            -- Remove date from compact completions
+            if quest.completions then
+                self:removeDateFromCompletions(quest.completions, uncomplete_date)
+            end
+
+            -- Update legacy fields based on remaining completions
+            local most_recent = self:getMostRecentCompletion(quest.completions)
+            if most_recent then
+                quest.completed = true
+                quest.completed_date = most_recent
+            else
                 quest.completed = false
                 quest.completed_date = nil
-            else
-                -- Set to most recent completion date
-                quest.completed_date = quest.completed_dates[#quest.completed_dates]
             end
 
             self:saveAllQuests(quests)
@@ -1174,9 +1307,9 @@ function Data:exportBackupToFile(filename)
     local temp_filepath = filepath .. ".tmp"
     local backup = self:createBackup()
 
-    -- Encode backup data to JSON string
+    -- Encode backup data to compact JSON (no pretty printing for smaller files)
     local pcall_ok, json_str = pcall(function()
-        return rapidjson.encode(backup, { pretty = true, sort_keys = true })
+        return rapidjson.encode(backup)
     end)
 
     if not pcall_ok then
