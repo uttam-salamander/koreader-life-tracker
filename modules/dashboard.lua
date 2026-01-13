@@ -169,7 +169,7 @@ Show the main dashboard view.
 function Dashboard:showDashboardView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = UIConfig:getScrollWidth()
+    local content_width = UIConfig:getPaddedContentWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     -- Title text can be in this zone (non-interactive), but gesture handlers must not be
@@ -411,12 +411,13 @@ function Dashboard:showDashboardView()
 
     -- ===== Wrap content in scrollable container =====
     local scroll_width = UIConfig:getScrollWidth()
+    local page_padding = UIConfig:getPagePadding()
 
-    -- Wrap content in scrollable frame (no padding - full-width content)
+    -- Wrap content in scrollable frame with page padding
     local inner_frame = FrameContainer:new{
         width = scroll_width,
-        height = math.max(screen_height, content:getSize().h),
-        padding = 0,
+        height = math.max(screen_height, content:getSize().h + page_padding * 2),
+        padding = page_padding,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,

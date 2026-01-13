@@ -102,8 +102,9 @@ function Settings:showSettingsView()
     local user_settings = Data:loadUserSettings()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
-    local content_width = scroll_width - Size.padding.large * 3
+    local scroll_width = UIConfig:getScrollWidth()
+    local page_padding = UIConfig:getPagePadding()
+    local content_width = UIConfig:getPaddedContentWidth()
     local button_width = content_width
 
     local content = VerticalGroup:new{align = "left"}
@@ -305,11 +306,11 @@ function Settings:showSettingsView()
     -- Bottom padding
     table.insert(content, VerticalSpan:new{width = Size.padding.large * 2})
 
-    -- Wrap content in scrollable frame (no padding - full-width content)
+    -- Wrap content in scrollable frame with page padding
     local inner_frame = FrameContainer:new{
         width = scroll_width,
-        height = math.max(screen_height, content:getSize().h),
-        padding = 0,
+        height = math.max(screen_height, content:getSize().h + page_padding * 2),
+        padding = page_padding,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,

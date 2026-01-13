@@ -129,7 +129,7 @@ end
 
 --[[--
 Custom widget for drawing spider/radar chart using Blitbuffer.
-Shows category performance as a polygon on radial axes.
+Shows category performance as a polygon on radial axes with labels on the sides.
 --]]
 local SpiderGraphWidget = Widget:extend{
     width = nil,
@@ -137,6 +137,8 @@ local SpiderGraphWidget = Widget:extend{
     data = nil,      -- Array of {label = string, value = 0-1}
     num_rings = 4,   -- Number of concentric grid rings
     show_labels = true,
+    label_margin = 45,  -- Space reserved for labels on sides
+    top_margin = 20,    -- Space reserved for top label
 }
 
 function SpiderGraphWidget:init()
@@ -147,8 +149,6 @@ function SpiderGraphWidget:paintTo(bb, x, y)
     local num_axes = #self.data
     if num_axes < 3 then
         -- Not enough categories for spider chart, draw placeholder text
-        local Font = require("ui/font")
-        local TextWidget = require("ui/widget/textwidget")
         local text = TextWidget:new{
             text = "Need 3+ categories",
             face = Font:getFace("cfont", 12),
@@ -160,9 +160,14 @@ function SpiderGraphWidget:paintTo(bb, x, y)
         return
     end
 
+    -- Reserve space for labels on all sides
+    local label_margin = self.label_margin
+    local top_margin = self.top_margin
+    local graph_width = self.width - label_margin * 2
+    local graph_height = self.height - top_margin * 2
     local center_x = x + self.width / 2
-    local center_y = y + self.height / 2
-    local max_radius = math.min(self.width, self.height) / 2 - 25  -- Leave room for labels
+    local center_y = y + top_margin + graph_height / 2  -- Shift down for top label
+    local max_radius = math.min(graph_width, graph_height) / 2 - 5
 
     -- Helper to draw a line using rectangles
     local function drawLine(x1, y1, x2, y2, color, thickness)
@@ -178,10 +183,13 @@ function SpiderGraphWidget:paintTo(bb, x, y)
         end
     end
 
-    -- Helper to get vertex position on the spider chart
+    -- Helper to get angle and vertex position on the spider chart
+    local function getAngle(axis_idx)
+        return -math.pi/2 + (axis_idx - 1) * 2 * math.pi / num_axes
+    end
+
     local function getVertex(axis_idx, radius)
-        -- Start from top (-90 degrees), go clockwise
-        local angle = -math.pi/2 + (axis_idx - 1) * 2 * math.pi / num_axes
+        local angle = getAngle(axis_idx)
         local vx = center_x + radius * math.cos(angle)
         local vy = center_y + radius * math.sin(angle)
         return Math.round(vx), Math.round(vy)
@@ -221,14 +229,56 @@ function SpiderGraphWidget:paintTo(bb, x, y)
     -- Draw data points as dots
     local dot_radius = 4
     for _, p in ipairs(data_points) do
-        for dy = -dot_radius, dot_radius do
-            local dx = Math.round(math.sqrt(dot_radius * dot_radius - dy * dy))
-            bb:paintRect(p.x - dx, p.y + dy, dx * 2 + 1, 1, Blitbuffer.COLOR_BLACK)
+        for pdy = -dot_radius, dot_radius do
+            local pdx = Math.round(math.sqrt(dot_radius * dot_radius - pdy * pdy))
+            bb:paintRect(p.x - pdx, p.y + pdy, pdx * 2 + 1, 1, Blitbuffer.COLOR_BLACK)
         end
     end
 
     -- Draw center dot
     bb:paintRect(center_x - 2, center_y - 2, 5, 5, Blitbuffer.COLOR_BLACK)
+
+    -- Draw labels at each axis (positioned outside the graph, clamped to bounds)
+    if self.show_labels then
+        for axis, item in ipairs(self.data) do
+            local angle = getAngle(axis)
+            local label_distance = max_radius + 8
+            local label_x = center_x + label_distance * math.cos(angle)
+            local label_y = center_y + label_distance * math.sin(angle)
+
+            -- Format label with value percentage
+            local label_text = string.format("%s %d%%", item.label:sub(1,6), Math.round((item.value or 0) * 100))
+            local label_widget = TextWidget:new{
+                text = label_text,
+                face = Font:getFace("cfont", 10),
+                fgcolor = Blitbuffer.COLOR_BLACK,
+            }
+            local label_size = label_widget:getSize()
+
+            -- Position label based on angle (left/right/center aligned)
+            local draw_x, draw_y
+            if math.abs(math.cos(angle)) < 0.3 then
+                -- Top or bottom - center horizontally
+                draw_x = label_x - label_size.w / 2
+                draw_y = label_y + (math.sin(angle) > 0 and 4 or -label_size.h)
+            elseif math.cos(angle) > 0 then
+                -- Right side - left align
+                draw_x = label_x + 4
+                draw_y = label_y - label_size.h / 2
+            else
+                -- Left side - right align
+                draw_x = label_x - label_size.w - 4
+                draw_y = label_y - label_size.h / 2
+            end
+
+            -- Clamp to widget bounds
+            draw_x = math.max(x, math.min(draw_x, x + self.width - label_size.w))
+            draw_y = math.max(y, math.min(draw_y, y + self.height - label_size.h))
+
+            label_widget:paintTo(bb, Math.round(draw_x), Math.round(draw_y))
+            label_widget:free()
+        end
+    end
 end
 
 --[[--
@@ -245,7 +295,7 @@ Build and display the journal view.
 function Journal:showJournalView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = UIConfig:getScrollWidth()
+    local content_width = UIConfig:getPaddedContentWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     local top_safe_zone = UIConfig:getTopSafeZone()
@@ -464,29 +514,18 @@ function Journal:showJournalView()
     -- Build spider chart data
     local spider_data = self:getCategoryPerformanceData()
     if #spider_data >= 3 then
-        -- Create pixel-based spider chart
-        local spider_size = Screen:scaleBySize(120)
+        -- Create larger spider chart with labels on sides
+        local spider_size = Screen:scaleBySize(200)
         local spider_chart = SpiderGraphWidget:new{
             width = content_width,
             height = spider_size,
             data = spider_data,
             num_rings = 4,
+            show_labels = true,
+            label_margin = 55,   -- Space for labels on sides
+            top_margin = 18,     -- Space for top label
         }
         table.insert(content, spider_chart)
-
-        -- Add labels below the chart
-        local label_row = HorizontalGroup:new{align = "center"}
-        local label_width = math.floor(content_width / #spider_data)
-        for _, item in ipairs(spider_data) do
-            table.insert(label_row, CenterContainer:new{
-                dimen = Geom:new{w = label_width, h = 20},
-                TextWidget:new{
-                    text = string.format("%s %d%%", item.label:sub(1,6), Math.round(item.value * 100)),
-                    face = Font:getFace("cfont", 10),
-                },
-            })
-        end
-        table.insert(content, label_row)
     else
         -- Fall back to simple bars if fewer than 3 categories
         local bar_widgets = self:buildCategorySpiderChart(content_width)
@@ -526,14 +565,15 @@ function Journal:showJournalView()
         fgcolor = Blitbuffer.gray(0.5),
     })
 
-    -- Wrap content in scrollable container
-    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
+    -- Wrap content in scrollable container with page padding
+    local scroll_width = UIConfig:getScrollWidth()
     local scroll_height = screen_height
+    local page_padding = UIConfig:getPagePadding()
 
     local inner_frame = FrameContainer:new{
         width = scroll_width,
-        height = math.max(scroll_height, content:getSize().h),
-        padding = 0,
+        height = math.max(scroll_height, content:getSize().h + page_padding * 2),
+        padding = page_padding,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,

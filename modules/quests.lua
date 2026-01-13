@@ -80,7 +80,7 @@ Build the quests view with proper navigation.
 function Quests:showQuestsView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = UIConfig:getScrollWidth()
+    local content_width = UIConfig:getPaddedContentWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     -- Title can be in this zone (non-interactive), but gesture handlers must not be
@@ -176,11 +176,12 @@ function Quests:showQuestsView()
     }
     table.insert(content, add_button)
 
-    -- Wrap content (no padding - full-width)
+    -- Wrap content with page padding
+    local page_padding = UIConfig:getPagePadding()
     local padded_content = FrameContainer:new{
-        width = UIConfig:getScrollWidth(),  -- Use centralized width calculation
+        width = UIConfig:getScrollWidth(),
         height = screen_height,
-        padding = 0,
+        padding = page_padding,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,

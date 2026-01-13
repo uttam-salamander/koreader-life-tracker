@@ -216,17 +216,21 @@ end
 
 --[[--
 Load covers asynchronously after initial render.
-Loads one cover at a time with small delays to keep UI responsive.
+Loads covers in batches with batched UI refreshes for better e-ink performance.
 --]]
 function Read:loadCoversAsync()
     if not self.books or #self.books == 0 then return end
     if not self.cover_widgets then return end
 
     local book_index = 1
+    local covers_loaded_since_refresh = 0
+    local BATCH_SIZE = 3  -- Refresh UI after loading this many covers
+    local MAX_BOOKS = 12  -- Limit to avoid loading too many
+
     local function loadNextCover()
-        if book_index > #self.books then
-            -- All done, trigger a refresh
-            if self.read_widget then
+        if book_index > #self.books or book_index > MAX_BOOKS then
+            -- All done, trigger final refresh if any covers were loaded
+            if covers_loaded_since_refresh > 0 and self.read_widget then
                 UIManager:setDirty(self.read_widget, "ui")
             end
             return
@@ -236,7 +240,7 @@ function Read:loadCoversAsync()
         local widget_ref = self.cover_widgets[book_index]
 
         if book and book.file and widget_ref and widget_ref.cover_container then
-            -- Try cache first
+            -- Try cache first (fast path)
             local cover = self:loadCoverFromCache(book.file, widget_ref.width, widget_ref.height)
 
             if not cover then
@@ -275,20 +279,27 @@ function Read:loadCoversAsync()
             if cover and widget_ref.cover_container then
                 -- Replace the placeholder with the real cover
                 widget_ref.cover_container[1] = cover
-                -- Trigger partial refresh for this area
-                if self.read_widget then
-                    UIManager:setDirty(self.read_widget, "ui")
+                covers_loaded_since_refresh = covers_loaded_since_refresh + 1
+
+                -- Batch UI refreshes for better e-ink performance
+                if covers_loaded_since_refresh >= BATCH_SIZE then
+                    if self.read_widget then
+                        UIManager:setDirty(self.read_widget, "ui")
+                    end
+                    covers_loaded_since_refresh = 0
                 end
             end
         end
 
         book_index = book_index + 1
-        -- Schedule next cover load with a small delay
-        UIManager:scheduleIn(0.05, loadNextCover)
+        -- Schedule next cover load with a small delay to keep UI responsive
+        -- Longer delay if we just did a refresh (let e-ink settle)
+        local delay = covers_loaded_since_refresh == 0 and 0.15 or 0.03
+        UIManager:scheduleIn(delay, loadNextCover)
     end
 
     -- Start loading after a short delay to let initial render complete
-    UIManager:scheduleIn(0.1, loadNextCover)
+    UIManager:scheduleIn(0.2, loadNextCover)
 end
 
 --[[--
@@ -819,9 +830,10 @@ function Read:showReadView()
     local screen_height = Screen:getHeight()
 
     -- Calculate dimensions
-    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
+    local scroll_width = UIConfig:getScrollWidth()
     local scroll_height = screen_height
-    local content_width = scroll_width - Size.padding.large * 3
+    local page_padding = UIConfig:getPagePadding()
+    local content_width = UIConfig:getPaddedContentWidth()
 
     -- Get recent books
     self.books = self:getRecentBooks()
@@ -862,11 +874,11 @@ function Read:showReadView()
     -- Bottom padding
     table.insert(content, VerticalSpan:new{width = Size.padding.large * 2})
 
-    -- Wrap content in frame with minimum height to fill viewport
+    -- Wrap content in frame with page padding
     local inner_frame = FrameContainer:new{
         width = scroll_width,
-        height = math.max(scroll_height, content:getSize().h),
-        padding = 0,
+        height = math.max(scroll_height, content:getSize().h + page_padding * 2),
+        padding = page_padding,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,

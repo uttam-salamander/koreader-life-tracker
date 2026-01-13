@@ -166,6 +166,9 @@ function UIConfig:getDimensions()
         border_default = Size.border.default,
         border_thick = Size.border.thick,
 
+        -- Page-level padding (left/right padding for all content pages)
+        page_padding = Screen:scaleBySize(12),
+
         -- ============================================================
         -- Typography Scale (standardized font sizes across all screens)
         -- ============================================================
@@ -228,14 +231,30 @@ end
 
 --[[--
 Get the available scroll width for content area next to navigation tabs.
-Left and right margins are equal - both come from FrameContainer padding.
+This is the full width available for the scrollable container.
 @treturn number Scroll width in pixels
 --]]
 function UIConfig:getScrollWidth()
     local screen_width = Screen:getWidth()
     local tab_width = self:dim("tab_width")
-    -- No extra padding - FrameContainer handles equal left/right margins
     return screen_width - tab_width
+end
+
+--[[--
+Get the page padding (left/right padding inside content frames).
+@treturn number Page padding in pixels
+--]]
+function UIConfig:getPagePadding()
+    return self:dim("page_padding")
+end
+
+--[[--
+Get the content width available after page padding.
+Use this for sizing elements that should respect left/right padding.
+@treturn number Content width in pixels (scroll_width - 2 * page_padding)
+--]]
+function UIConfig:getPaddedContentWidth()
+    return self:getScrollWidth() - self:getPagePadding() * 2
 end
 
 --[[--

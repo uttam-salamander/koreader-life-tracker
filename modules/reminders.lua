@@ -64,7 +64,7 @@ Display the reminders with proper navigation.
 function Reminders:showRemindersView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
-    local content_width = UIConfig:getScrollWidth()
+    local content_width = UIConfig:getPaddedContentWidth()
 
     -- KOReader reserves top ~10% for menu gesture
     local top_safe_zone = UIConfig:getTopSafeZone()
@@ -203,14 +203,15 @@ function Reminders:showRemindersView()
     }
     table.insert(content, add_button)
 
-    -- Wrap content in scrollable container
-    local scroll_width = UIConfig:getScrollWidth()  -- Use centralized width calculation
+    -- Wrap content in scrollable container with page padding
+    local scroll_width = UIConfig:getScrollWidth()
     local scroll_height = screen_height
+    local page_padding = UIConfig:getPagePadding()
 
     local inner_frame = FrameContainer:new{
         width = scroll_width,
-        height = math.max(scroll_height, content:getSize().h),
-        padding = 0,
+        height = math.max(scroll_height, content:getSize().h + page_padding * 2),
+        padding = page_padding,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
         content,

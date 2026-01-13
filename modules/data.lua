@@ -15,7 +15,7 @@ local Data = {}
 -- Logs will appear in KOReader's crash.log or via SSH
 -- Location: koreader/crash.log on device
 -- ============================================
-Data.DEBUG = false  -- <<< SET TO true TO ENABLE LOGGING <<<
+Data.DEBUG = true  -- <<< SET TO true TO ENABLE LOGGING <<<
 
 function Data:log(message, ...)
     if not self.DEBUG then return end
@@ -430,19 +430,114 @@ function Data:deleteQuest(quest_type, quest_id)
     return false
 end
 
-function Data:completeQuest(quest_type, quest_id)
-    local today = os.date("%Y-%m-%d")
-    return self:updateQuest(quest_type, quest_id, {
-        completed = true,
-        completed_date = today,
-    })
+--[[--
+Check if a quest is completed on a specific date.
+Uses completion_dates array for history tracking.
+@param quest table Quest object
+@param date string Date in YYYY-MM-DD format
+@treturn boolean True if completed on that date
+--]]
+function Data:isQuestCompletedOnDate(quest, date)
+    if not quest or not date then return false end
+
+    -- Support both new array format and legacy single date format
+    if quest.completed_dates and type(quest.completed_dates) == "table" then
+        for _, d in ipairs(quest.completed_dates) do
+            if d == date then return true end
+        end
+        return false
+    end
+
+    -- Legacy fallback: single completed_date
+    return quest.completed and quest.completed_date == date
 end
 
-function Data:uncompleteQuest(quest_type, quest_id)
-    return self:updateQuest(quest_type, quest_id, {
-        completed = false,
-        completed_date = nil,
-    })
+--[[--
+Complete a quest for a specific date.
+Adds the date to the completion history.
+@param quest_type string "daily", "weekly", or "monthly"
+@param quest_id string Quest ID
+@param date string|nil Date to mark complete (defaults to today)
+@treturn table|nil Updated quest or nil if not found
+--]]
+function Data:completeQuest(quest_type, quest_id, date)
+    local completion_date = date or os.date("%Y-%m-%d")
+    local quests = self:loadAllQuests()
+
+    for _, quest in ipairs(quests[quest_type] or {}) do
+        if quest.id == quest_id then
+            -- Initialize completed_dates array if needed
+            if not quest.completed_dates or type(quest.completed_dates) ~= "table" then
+                quest.completed_dates = {}
+                -- Migrate legacy data if exists
+                if quest.completed_date then
+                    table.insert(quest.completed_dates, quest.completed_date)
+                end
+            end
+
+            -- Add date if not already in array
+            local already_completed = false
+            for _, d in ipairs(quest.completed_dates) do
+                if d == completion_date then
+                    already_completed = true
+                    break
+                end
+            end
+
+            if not already_completed then
+                table.insert(quest.completed_dates, completion_date)
+            end
+
+            -- Keep legacy fields for backwards compatibility
+            quest.completed = true
+            quest.completed_date = completion_date
+
+            self:saveAllQuests(quests)
+            return quest
+        end
+    end
+    return nil
+end
+
+--[[--
+Uncomplete a quest for a specific date.
+Removes the date from the completion history.
+@param quest_type string "daily", "weekly", or "monthly"
+@param quest_id string Quest ID
+@param date string|nil Date to uncomplete (defaults to today)
+@treturn table|nil Updated quest or nil if not found
+--]]
+function Data:uncompleteQuest(quest_type, quest_id, date)
+    local uncomplete_date = date or os.date("%Y-%m-%d")
+    local quests = self:loadAllQuests()
+
+    for _, quest in ipairs(quests[quest_type] or {}) do
+        if quest.id == quest_id then
+            -- Remove date from completed_dates array
+            if quest.completed_dates and type(quest.completed_dates) == "table" then
+                for i, d in ipairs(quest.completed_dates) do
+                    if d == uncomplete_date then
+                        table.remove(quest.completed_dates, i)
+                        break
+                    end
+                end
+            end
+
+            -- Update legacy fields
+            -- Only clear completed if no dates remain
+            if not quest.completed_dates or #quest.completed_dates == 0 then
+                quest.completed = false
+                quest.completed_date = nil
+            else
+                -- Set to most recent completion date
+                quest.completed_date = quest.completed_dates[#quest.completed_dates]
+            end
+
+            self:saveAllQuests(quests)
+            return quest
+        end
+    end
+    return nil
 end
 
 --[[--
