@@ -352,13 +352,22 @@ end
 
 --[[--
 Parse a date string into year-month key and day number.
+Validates format strictly to prevent data corruption.
 @param date string Date in YYYY-MM-DD format
-@return string, number Year-month key (YYYY-MM) and day number (1-31)
+@return string, number Year-month key (YYYY-MM) and day number (1-31), or nil,nil if invalid
 --]]
 function Data:parseDateToCompact(date)
     if not date or type(date) ~= "string" then return nil, nil end
+    -- Validate format: must be exactly "YYYY-MM-DD" (10 chars with dashes at positions 5 and 8)
+    if #date ~= 10 or date:sub(5, 5) ~= "-" or date:sub(8, 8) ~= "-" then
+        return nil, nil
+    end
     local year_month = date:sub(1, 7)  -- "YYYY-MM"
     local day = tonumber(date:sub(9, 10))
+    -- Validate day is in valid range (1-31)
+    if not day or day < 1 or day > 31 then
+        return nil, nil
+    end
     return year_month, day
 end
 
@@ -491,6 +500,31 @@ function Data:loadAllQuests()
         weekly = q:readSetting("weekly") or {},
         monthly = q:readSetting("monthly") or {},
     }
+
+    -- Migrate all quests from old array format to compact format on load
+    -- This prevents race conditions from lazy migration in completeQuest
+    local needs_save = false
+    for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
+        for _, quest in ipairs(quests[quest_type]) do
+            if not quest.completions and quest.completed_dates then
+                quest.completions = self:migrateToCompactDates(quest.completed_dates)
+                quest.completed_dates = nil  -- Remove old format
+                needs_save = true
+            elseif not quest.completions and quest.completed_date then
+                -- Migrate from legacy single date format
+                quest.completions = {}
+                self:addDateToCompletions(quest.completions, quest.completed_date)
+                needs_save = true
+            end
+        end
+    end
+
+    -- Save migrated data if any changes were made
+    if needs_save then
+        self:log("Migrating quest data to compact format")
+        self:saveAllQuests(quests)
+    end
+
     self:log("Loaded quests - daily:", #quests.daily, "weekly:", #quests.weekly, "monthly:", #quests.monthly)
     return quests
 end
@@ -600,29 +634,22 @@ Uses compact storage format: {["YYYY-MM"] = {day1, day2, ...}}
 --]]
 function Data:completeQuest(quest_type, quest_id, date)
     local completion_date = date or os.date("%Y-%m-%d")
-    local quests = self:loadAllQuests()
+    local quests = self:loadAllQuests()  -- Migration happens on load now
 
     for _, quest in ipairs(quests[quest_type] or {}) do
         if quest.id == quest_id then
-            -- Migrate from old formats if needed
+            -- Initialize completions if needed (for new quests)
             if not quest.completions then
                 quest.completions = {}
-                -- Migrate from old array format
-                if quest.completed_dates and type(quest.completed_dates) == "table" then
-                    quest.completions = self:migrateToCompactDates(quest.completed_dates)
-                    quest.completed_dates = nil  -- Remove old format
-                -- Migrate from legacy single date
-                elseif quest.completed_date then
-                    self:addDateToCompletions(quest.completions, quest.completed_date)
-                end
             end
 
             -- Add date to compact completions
             self:addDateToCompletions(quest.completions, completion_date)
 
-            -- Keep legacy fields for backwards compatibility with other code
+            -- Update legacy fields to most recent completion (not just current date)
+            local most_recent = self:getMostRecentCompletion(quest.completions)
             quest.completed = true
-            quest.completed_date = completion_date
+            quest.completed_date = most_recent or completion_date
 
             self:saveAllQuests(quests)
             return quest
@@ -641,16 +668,10 @@ Removes the date from the completion history.
 --]]
 function Data:uncompleteQuest(quest_type, quest_id, date)
     local uncomplete_date = date or os.date("%Y-%m-%d")
-    local quests = self:loadAllQuests()
+    local quests = self:loadAllQuests()  -- Migration happens on load now
 
     for _, quest in ipairs(quests[quest_type] or {}) do
         if quest.id == quest_id then
-            -- Migrate from old formats if needed
-            if not quest.completions and quest.completed_dates then
-                quest.completions = self:migrateToCompactDates(quest.completed_dates)
-                quest.completed_dates = nil
-            end
-
             -- Remove date from compact completions
             if quest.completions then
                 self:removeDateFromCompletions(quest.completions, uncomplete_date)
