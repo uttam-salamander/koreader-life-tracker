@@ -69,12 +69,13 @@ function SleepScreen:getDailyQuestStats()
         return { total = 0, completed = 0 }
     end
 
+    local today = os.date("%Y-%m-%d")
     local total = #all_quests.daily
     local completed = 0
 
-    -- Count completed quests
+    -- Count completed quests for today
     for _, quest in ipairs(all_quests.daily) do
-        if quest.completed then
+        if Data:isQuestCompletedOnDate(quest, today) then
             completed = completed + 1
         end
     end
@@ -267,11 +268,13 @@ function SleepScreen:buildContent()
             table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
             -- Show up to 5 quests to keep it compact
+            local today = os.date("%Y-%m-%d")
             local quest_count = 0
             for _, quest in ipairs(time_slot_quests) do
                 if quest_count >= 5 then break end
 
-                local status_icon = quest.completed and "[Done]" or "[    ]"
+                local is_completed = Data:isQuestCompletedOnDate(quest, today)
+                local status_icon = is_completed and "[Done]" or "[    ]"
                 local quest_text = status_icon .. " " .. (quest.title or "Untitled")
 
                 -- Truncate long titles
@@ -282,7 +285,7 @@ function SleepScreen:buildContent()
                 table.insert(content, TextWidget:new{
                     text = quest_text,
                     face = UIConfig:getFont("cfont", 16),  -- Increased font size
-                    fgcolor = quest.completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK,
+                    fgcolor = is_completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK,
                 })
                 quest_count = quest_count + 1
             end

@@ -120,12 +120,14 @@ function Dashboard:getDailyQuestStats()
     local total = 0
     local completed = 0
     local today_energy = self.user_settings.today_energy
+    local today = Data:getCurrentDate()
 
     -- Filter by energy and count
     local filtered = self:filterQuestsByEnergy(all_quests.daily, today_energy)
     for _, quest in ipairs(filtered) do
         total = total + 1
-        if quest.completed then
+        -- Use date-specific completion check (not legacy quest.completed flag)
+        if Data:isQuestCompletedOnDate(quest, today) then
             completed = completed + 1
         end
     end
@@ -205,7 +207,7 @@ function Dashboard:showDashboardView()
         local quote_widget = TextWidget:new{
             text = "\"" .. quote .. "\"",
             face = UIConfig:getFont("cfont", 14),
-            fgcolor = colors.muted,
+            fgcolor = colors.foreground,
             max_width = content_width,
         }
         table.insert(content, quote_widget)
@@ -240,7 +242,7 @@ function Dashboard:showDashboardView()
     table.insert(content, TextWidget:new{
         text = string.format(_("Today's Progress: %d/%d"), daily_stats.completed, daily_stats.total),
         face = Font:getFace("cfont", 13),
-        fgcolor = Blitbuffer.gray(0.3),
+        fgcolor = UIConfig:color("foreground"),
     })
     self.current_y = self.current_y + 18
 
@@ -286,7 +288,7 @@ function Dashboard:showDashboardView()
             table.insert(content, TextWidget:new{
                 text = reminder_text,
                 face = Font:getFace("cfont", 14),
-                fgcolor = Blitbuffer.gray(0.3),
+                fgcolor = UIConfig:color("foreground"),
             })
             self.current_y = self.current_y + 20
         end
@@ -585,7 +587,7 @@ function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, q
             table.insert(section, TextWidget:new{
                 text = slot,
                 face = Font:getFace("cfont", 12),
-                fgcolor = Blitbuffer.gray(0.4),
+                fgcolor = UIConfig:color("foreground"),
             })
             self.current_y = self.current_y + 18
 
@@ -660,8 +662,10 @@ function Dashboard:buildQuestRow(quest, quest_type)
     local colors = UIConfig:getColors()
     local dashboard = self
 
-    local status_bg = (quest.completed and colors.completed_bg) or colors.background
-    local text_color = (quest.completed and colors.muted) or colors.foreground
+    -- Use date-specific completion check (not legacy quest.completed flag)
+    local is_completed = Data:isQuestCompletedOnDate(quest, today)
+    local status_bg = (is_completed and colors.completed_bg) or colors.background
+    local text_color = (is_completed and colors.muted) or colors.foreground
 
     -- Check if progressive quest needs daily reset
     if quest.is_progressive and quest.progress_last_date ~= today then
@@ -710,7 +714,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
         local current = quest.progress_current or 0
         local target = quest.progress_target or 1
         local pct = math.min(1, current / target)
-        local progress_bg = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
+        local progress_bg = is_completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
         local progress_text = string.format("%d/%d", current, target)
 
         local progress_display = FrameContainer:new{
@@ -724,7 +728,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
                 TextWidget:new{
                     text = progress_text,
                     face = Font:getFace("cfont", 11),
-                    bold = quest.completed,
+                    bold = is_completed,
                 },
             },
         }
@@ -740,7 +744,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
             text_font_face = "cfont",
             text_font_size = 16,
             text_font_bold = true,
-            enabled = not quest.completed,
+            enabled = not is_completed,
             callback = function()
                 dashboard:handleProgressPlus(quest, quest_type)
             end,
@@ -782,7 +786,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
         }
 
         -- Complete button with callback
-        local complete_text = quest.completed and "X" or "Done"
+        local complete_text = is_completed and "X" or "Done"
         local complete_button = Button:new{
             text = complete_text,
             width = getButtonWidth(),
@@ -1013,7 +1017,8 @@ function Dashboard:updateDailyLog()
     for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
         for _, quest in ipairs(quests[quest_type] or {}) do
             total = total + 1
-            if quest.completed and quest.completed_date == today then
+            -- Use date-specific completion check (not legacy flags)
+            if Data:isQuestCompletedOnDate(quest, today) then
                 completed = completed + 1
             end
         end
@@ -1087,7 +1092,9 @@ end
 Show actions dialog for a quest.
 --]]
 function Dashboard:showQuestActions(quest, quest_type)
-    local complete_text = quest.completed and _("Mark Incomplete") or _("Mark Complete")
+    local today = Data:getCurrentDate()
+    local is_completed = Data:isQuestCompletedOnDate(quest, today)
+    local complete_text = is_completed and _("Mark Incomplete") or _("Mark Complete")
 
     local buttons = {
         {{
@@ -1123,12 +1130,12 @@ end
 Toggle quest completion status.
 --]]
 function Dashboard:toggleQuestComplete(quest, quest_type)
-    local was_completed = quest.completed
-    if quest.completed then
+    local today = Data:getCurrentDate()
+    local was_completed = Data:isQuestCompletedOnDate(quest, today)
+    if was_completed then
         Data:uncompleteQuest(quest_type, quest.id)
     else
         -- Complete the quest
-        local today = Data:getCurrentDate()
         local all_quests = Data:loadAllQuests()
 
         for _, q in ipairs(all_quests[quest_type] or {}) do
@@ -1285,7 +1292,7 @@ function Dashboard:buildDynamicHeatmap(content_width)
             table.insert(heatmap_group, TextWidget:new{
                 text = section_label,
                 face = Font:getFace("cfont", 12),
-                fgcolor = Blitbuffer.gray(0.4),
+                fgcolor = UIConfig:color("foreground"),
             })
         end
 
@@ -1328,7 +1335,7 @@ function Dashboard:buildDynamicHeatmap(content_width)
     table.insert(heatmap_group, TextWidget:new{
         text = legend,
         face = Font:getFace("cfont", LEGEND_FONT_SIZE),
-        fgcolor = Blitbuffer.gray(0.3),
+        fgcolor = UIConfig:color("foreground"),
         max_width = content_width,
     })
 

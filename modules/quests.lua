@@ -297,8 +297,10 @@ function Quests:buildQuestRow(quest, content_width)
     local colors = UIConfig:getColors()
     local quests_module = self
 
-    local status_bg = (quest.completed and colors.completed_bg) or colors.background
-    local text_color = (quest.completed and colors.muted) or colors.foreground
+    -- Use date-specific completion check (not legacy quest.completed flag)
+    local is_completed = Data:isQuestCompletedOnDate(quest, today)
+    local status_bg = (is_completed and colors.completed_bg) or colors.background
+    local text_color = (is_completed and colors.muted) or colors.foreground
 
     -- Check if progressive quest needs daily reset
     if quest.is_progressive and quest.progress_last_date ~= today then
@@ -342,7 +344,7 @@ function Quests:buildQuestRow(quest, content_width)
         local current = quest.progress_current or 0
         local target = quest.progress_target or 1
         local pct = math.min(1, current / target)
-        local progress_bg = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
+        local progress_bg = is_completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
         local progress_text = string.format("%d/%d", current, target)
         if quest.progress_unit then
             progress_text = progress_text .. " " .. quest.progress_unit:sub(1, 4)
@@ -359,7 +361,7 @@ function Quests:buildQuestRow(quest, content_width)
                 TextWidget:new{
                     text = progress_text,
                     face = Font:getFace("cfont", 11),
-                    bold = quest.completed,
+                    bold = is_completed,
                 },
             },
         }
@@ -375,7 +377,7 @@ function Quests:buildQuestRow(quest, content_width)
             text_font_face = "cfont",
             text_font_size = 16,
             text_font_bold = true,
-            enabled = not quest.completed,
+            enabled = not is_completed,
             callback = function()
                 quests_module:incrementQuestProgress(quest)
             end,
@@ -411,7 +413,7 @@ function Quests:buildQuestRow(quest, content_width)
         }
 
         -- Complete button with callback
-        local complete_text = quest.completed and "X" or "Done"
+        local complete_text = is_completed and "X" or "Done"
         local complete_button = Button:new{
             text = complete_text,
             width = getButtonWidth(),
@@ -574,11 +576,8 @@ function Quests:buildQuestHeatmap(quest)
             local date_time = today - (29 - day_offset) * 86400
             local date_str = os.date("%Y-%m-%d", date_time)
 
-            -- Check if this quest was completed on this day
-            local completed = false
-            if quest.completed_date == date_str then
-                completed = true
-            end
+            -- Check if this quest was completed on this day using compact date format
+            local completed = Data:isQuestCompletedOnDate(quest, date_str)
 
             row = row .. (completed and "#" or ".")
         end
@@ -594,11 +593,11 @@ end
 Toggle quest completion status.
 --]]
 function Quests:toggleQuestComplete(quest)
-    local was_completed = quest.completed
-    if quest.completed then
+    local today = Data:getCurrentDate()
+    local was_completed = Data:isQuestCompletedOnDate(quest, today)
+    if was_completed then
         Data:uncompleteQuest(self.current_type, quest.id)
     else
-        local today = Data:getCurrentDate()
         local quests = Data:loadAllQuests()
 
         for _, q in ipairs(quests[self.current_type]) do
@@ -806,7 +805,8 @@ function Quests:updateDailyLog()
     for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
         for _, quest in ipairs(quests[quest_type] or {}) do
             total = total + 1
-            if quest.completed and quest.completed_date == today then
+            -- Use date-specific completion check (not legacy flags)
+            if Data:isQuestCompletedOnDate(quest, today) then
                 completed = completed + 1
             end
         end
@@ -1255,12 +1255,13 @@ function Quests:getFilteredQuestsForToday(energy_level)
     if not quests then return {} end
 
     local user_settings = Data:loadUserSettings()
+    local today = Data:getCurrentDate()
     local filtered = {}
 
     if not energy_level then
         for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
             for _, quest in ipairs(quests[quest_type] or {}) do
-                if not quest.completed then
+                if not Data:isQuestCompletedOnDate(quest, today) then
                     table.insert(filtered, quest)
                 end
             end
@@ -1273,7 +1274,7 @@ function Quests:getFilteredQuestsForToday(energy_level)
 
     for _, quest_type in ipairs({"daily", "weekly", "monthly"}) do
         for _, quest in ipairs(quests[quest_type] or {}) do
-            if not quest.completed then
+            if not Data:isQuestCompletedOnDate(quest, today) then
                 local energy_req = quest.energy_required
                 local matches = false
 

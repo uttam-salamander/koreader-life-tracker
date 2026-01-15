@@ -284,7 +284,7 @@ function Timeline:showTimelineView()
             self.current_y = self.current_y + 20
         else
             for _, quest in ipairs(slot_quests) do
-                if quest.completed then
+                if Data:isQuestCompletedOnDate(quest, self.view_date) then
                     completed_quests = completed_quests + 1
                 end
 
@@ -491,8 +491,10 @@ function Timeline:buildQuestRow(quest, content_width)
     local colors = UIConfig:getColors()
     local timeline = self
 
-    local status_bg = (quest.completed and colors.completed_bg) or colors.background
-    local text_color = (quest.completed and colors.muted) or colors.foreground
+    -- Use date-specific completion check
+    local is_completed = Data:isQuestCompletedOnDate(quest, view_date)
+    local status_bg = (is_completed and colors.completed_bg) or colors.background
+    local text_color = (is_completed and colors.muted) or colors.foreground
 
     -- Check if this quest is skipped for the viewed date
     local is_skipped = (quest.skipped_date == view_date)
@@ -537,7 +539,7 @@ function Timeline:buildQuestRow(quest, content_width)
         local current = quest.progress_current or 0
         local target = quest.progress_target or 1
         local pct = math.min(1, current / target)
-        local progress_bg = quest.completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
+        local progress_bg = is_completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
         local progress_text = string.format("%d/%d", current, target)
 
         local progress_display = FrameContainer:new{
@@ -551,7 +553,7 @@ function Timeline:buildQuestRow(quest, content_width)
                 TextWidget:new{
                     text = progress_text,
                     face = Font:getFace("cfont", 11),
-                    bold = quest.completed,
+                    bold = is_completed,
                 },
             },
         }
@@ -567,7 +569,7 @@ function Timeline:buildQuestRow(quest, content_width)
             text_font_face = "cfont",
             text_font_size = 16,
             text_font_bold = true,
-            enabled = not quest.completed,
+            enabled = not is_completed,
             callback = function()
                 timeline:incrementQuestProgress(quest)
             end,
@@ -602,7 +604,7 @@ function Timeline:buildQuestRow(quest, content_width)
         }
 
         -- Complete button with callback
-        local complete_text = quest.completed and "X" or "Done"
+        local complete_text = is_completed and "X" or "Done"
         local complete_button = Button:new{
             text = complete_text,
             width = getButtonWidth(),
@@ -670,7 +672,8 @@ end
 Show actions for a quest.
 --]]
 function Timeline:showQuestActions(quest)
-    local complete_text = quest.completed and _("Mark Incomplete") or _("Mark Complete")
+    local is_completed = Data:isQuestCompletedOnDate(quest, self.view_date)
+    local complete_text = is_completed and _("Mark Incomplete") or _("Mark Complete")
 
     local buttons = {
         {{
@@ -713,9 +716,9 @@ function Timeline:toggleQuestComplete(quest)
         if quest_type then break end
     end
 
-    local was_completed = quest.completed
+    local was_completed = Data:isQuestCompletedOnDate(quest, self.view_date)
     if quest_type then
-        if quest.completed then
+        if was_completed then
             -- Pass view_date so we uncomplete the specific date being viewed
             Data:uncompleteQuest(quest_type, quest.id, self.view_date)
         else

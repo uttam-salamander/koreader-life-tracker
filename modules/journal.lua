@@ -1269,7 +1269,7 @@ function Journal:getCategoryPerformanceData()
             local cat = quest.category or "None"
             if category_stats[cat] then
                 category_stats[cat].total = category_stats[cat].total + 1
-                if quest.completed and quest.completed_date == today then
+                if Data:isQuestCompletedOnDate(quest, today) then
                     category_stats[cat].completed = category_stats[cat].completed + 1
                 end
             end
@@ -1316,7 +1316,7 @@ function Journal:buildCategorySpiderChart(_content_width)
                 category_stats[cat] = { completed = 0, total = 0 }
             end
             category_stats[cat].total = category_stats[cat].total + 1
-            if quest.completed and quest.completed_date == today then
+            if Data:isQuestCompletedOnDate(quest, today) then
                 category_stats[cat].completed = category_stats[cat].completed + 1
             end
         end
