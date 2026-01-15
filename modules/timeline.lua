@@ -66,9 +66,7 @@ function Timeline:navigateDay(offset)
     self.view_date = os.date("%Y-%m-%d", new_time)
 
     -- Refresh view
-    if self.timeline_widget then
-        UIManager:close(self.timeline_widget)
-    end
+    UIHelpers.closeWidget(self, "timeline_widget")
     self:showTimelineView()
     UIManager:setDirty("all", "ui")
 end
@@ -91,9 +89,7 @@ function Timeline:showDatePicker()
             -- Format selected date
             self.view_date = string.format("%04d-%02d-%02d", time.year, time.month, time.day)
             -- Refresh view
-            if self.timeline_widget then
-                UIManager:close(self.timeline_widget)
-            end
+            UIHelpers.closeWidget(self, "timeline_widget")
             self:showTimelineView()
             UIManager:setDirty("all", "ui")
         end
@@ -325,7 +321,7 @@ function Timeline:showTimelineView()
     local ui = self.ui
 
     local function on_tab_change(tab_id)
-        UIManager:close(timeline.timeline_widget)
+        UIHelpers.closeWidget(timeline, "timeline_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -496,9 +492,7 @@ function Timeline:buildQuestRow(quest, content_width)
         show_streak = false,  -- Timeline doesn't show streaks
         is_skipped = is_skipped,
         on_refresh = function()
-            if timeline.timeline_widget then
-                UIManager:close(timeline.timeline_widget)
-            end
+            UIHelpers.closeWidget(timeline, "timeline_widget")
             timeline:showTimelineView()
             UIManager:setDirty("all", "ui")
         end,
@@ -564,9 +558,7 @@ function Timeline:toggleQuestComplete(quest)
         end
 
         -- Refresh timeline
-        if self.timeline_widget then
-            UIManager:close(self.timeline_widget)
-        end
+        UIHelpers.closeWidget(self, "timeline_widget")
         self:showTimelineView()
 
         -- Force immediate screen refresh
@@ -610,9 +602,7 @@ function Timeline:skipQuest(quest)
         Data:saveAllQuests(all_quests)
 
         -- Refresh timeline
-        if self.timeline_widget then
-            UIManager:close(self.timeline_widget)
-        end
+        UIHelpers.closeWidget(self, "timeline_widget")
         self:showTimelineView()
 
         -- Force immediate screen refresh
@@ -650,9 +640,7 @@ function Timeline:unskipQuest(quest)
         Data:saveAllQuests(all_quests)
 
         -- Refresh timeline
-        if self.timeline_widget then
-            UIManager:close(self.timeline_widget)
-        end
+        UIHelpers.closeWidget(self, "timeline_widget")
         self:showTimelineView()
 
         -- Force screen refresh
@@ -690,9 +678,7 @@ function Timeline:incrementQuestProgress(quest)
         local updated = Data:incrementQuestProgress(quest_type, quest.id)
         if updated then
             -- Refresh timeline
-            if self.timeline_widget then
-                UIManager:close(self.timeline_widget)
-            end
+            UIHelpers.closeWidget(self, "timeline_widget")
             self:showTimelineView()
             UIManager:setDirty("all", "ui")
 
@@ -727,9 +713,7 @@ function Timeline:decrementQuestProgress(quest)
         local updated = Data:decrementQuestProgress(quest_type, quest.id)
         if updated then
             -- Refresh timeline
-            if self.timeline_widget then
-                UIManager:close(self.timeline_widget)
-            end
+            UIHelpers.closeWidget(self, "timeline_widget")
             self:showTimelineView()
             UIManager:setDirty("all", "ui")
         end
@@ -782,9 +766,7 @@ function Timeline:showProgressInput(quest)
                         UIManager:close(dialog)
 
                         -- Refresh timeline
-                        if self.timeline_widget then
-                            UIManager:close(self.timeline_widget)
-                        end
+                        UIHelpers.closeWidget(self, "timeline_widget")
                         self:showTimelineView()
                         UIManager:setDirty("all", "ui")
                     else

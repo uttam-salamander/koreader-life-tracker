@@ -24,7 +24,29 @@ local _ = require("gettext")
 local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
 
+local UIManager = require("ui/uimanager")
+
 local UIHelpers = {}
+
+-- ============================================================================
+-- Widget Lifecycle Helpers
+-- ============================================================================
+
+--[[--
+Close a widget and clear its reference to prevent memory leaks.
+This is the proper way to close a widget - UIManager:close() alone
+leaves stale references that prevent garbage collection.
+
+@param module table The module instance (e.g., Dashboard, Quests)
+@param widget_key string The key storing the widget reference (e.g., "dashboard_widget")
+--]]
+function UIHelpers.closeWidget(module, widget_key)
+    local widget = module[widget_key]
+    if widget then
+        UIManager:close(widget)
+        module[widget_key] = nil
+    end
+end
 
 -- ============================================================================
 -- Gesture Helpers

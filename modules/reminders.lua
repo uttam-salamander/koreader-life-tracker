@@ -228,7 +228,7 @@ function Reminders:showRemindersView()
     local ui = self.ui
 
     local function on_tab_change(tab_id)
-        UIManager:close(reminders_module.reminders_widget)
+        UIHelpers.closeWidget(reminders_module, "reminders_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -279,7 +279,7 @@ function Reminders:showRemindersView()
     }
     UIHelpers.setupCornerGestures(self.reminders_widget, self, gesture_dims)
     UIHelpers.setupSwipeToClose(self.reminders_widget, function()
-        UIManager:close(self.reminders_widget)
+        UIHelpers.closeWidget(reminders_module, "reminders_widget")
     end, gesture_dims)
 
     UIManager:show(self.reminders_widget)
@@ -928,7 +928,7 @@ function Reminders:createReminder(title, time, repeat_days, start_date)
     })
 
     -- Refresh
-    UIManager:close(self.reminders_widget)
+    UIHelpers.closeWidget(self, "reminders_widget")
     self:showRemindersView()
     UIManager:setDirty("all", "ui")
 end
@@ -969,7 +969,7 @@ function Reminders:showEditReminder(reminder)
                     end
                     UIManager:close(dialog)
                     Data:updateReminder(reminder.id, {title = new_title})
-                    UIManager:close(self.reminders_widget)
+                    UIHelpers.closeWidget(self, "reminders_widget")
                     self:showRemindersView()
                 end,
             },
@@ -985,7 +985,7 @@ Toggle reminder active state.
 function Reminders:toggleReminder(reminder)
     Data:updateReminder(reminder.id, {active = not reminder.active})
 
-    UIManager:close(self.reminders_widget)
+    UIHelpers.closeWidget(self, "reminders_widget")
     self:showRemindersView()
     UIManager:setDirty("all", "ui")
 end
@@ -1009,7 +1009,7 @@ function Reminders:confirmDelete(reminder)
                 callback = function()
                     UIManager:close(dialog)
                     Data:deleteReminder(reminder.id)
-                    UIManager:close(self.reminders_widget)
+                    UIHelpers.closeWidget(self, "reminders_widget")
                     self:showRemindersView()
                     UIManager:setDirty("all", "ui")
                 end,
@@ -1017,56 +1017,6 @@ function Reminders:confirmDelete(reminder)
         },
     }
     UIManager:show(dialog)
-end
-
---[[--
-Check for due reminders (called periodically by main plugin).
---]]
-function Reminders:checkDueReminders()
-    local reminders = Data:loadReminders()
-    local now = os.date("*t")
-    local current_time = string.format("%02d:%02d", now.hour, now.min)
-    local today_abbr = DAY_NAMES[now.wday]
-    local today_date = os.date("%Y-%m-%d")
-
-    local due = {}
-
-    for _, reminder in ipairs(reminders) do
-        if reminder.active and reminder.time == current_time then
-            local should_fire = false
-            if not reminder.repeat_days or #reminder.repeat_days == 0 then
-                if reminder.last_triggered ~= today_date then
-                    should_fire = true
-                end
-            else
-                for _, day in ipairs(reminder.repeat_days) do
-                    if day == today_abbr then
-                        if reminder.last_triggered ~= today_date then
-                            should_fire = true
-                        end
-                        break
-                    end
-                end
-            end
-
-            if should_fire then
-                table.insert(due, reminder)
-                Data:updateReminder(reminder.id, {last_triggered = today_date})
-            end
-        end
-    end
-
-    return due
-end
-
---[[--
-Show a gentle notification for a reminder.
---]]
-function Reminders:showNotification(reminder)
-    UIManager:show(InfoMessage:new{
-        text = string.format("%s\n\nTime for: %s", reminder.time, reminder.title),
-        timeout = 10,
-    })
 end
 
 --[[--

@@ -179,7 +179,7 @@ function Quests:showQuestsView()
     local ui = self.ui
 
     local function on_tab_change(tab_id)
-        UIManager:close(quests_module.quests_widget)
+        UIHelpers.closeWidget(quests_module, "quests_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -226,7 +226,7 @@ function Quests:showQuestsView()
     }
     UIHelpers.setupCornerGestures(self.quests_widget, self, gesture_dims)
     UIHelpers.setupSwipeToClose(self.quests_widget, function()
-        UIManager:close(self.quests_widget)
+        UIHelpers.closeWidget(quests_module, "quests_widget")
     end, gesture_dims)
 
     UIManager:show(self.quests_widget)
@@ -286,9 +286,7 @@ function Quests:buildQuestRow(quest, content_width)
         content_width = content_width,
         show_streak = true,
         on_refresh = function()
-            if quests_module.quests_widget then
-                UIManager:close(quests_module.quests_widget)
-            end
+            UIHelpers.closeWidget(quests_module, "quests_widget")
             quests_module:showQuestsView()
             UIManager:setDirty("all", "ui")
         end,
@@ -302,9 +300,7 @@ Called by type tab Button callbacks.
 function Quests:switchType(type_id)
     if type_id ~= self.current_type then
         self.current_type = type_id
-        if self.quests_widget then
-            UIManager:close(self.quests_widget)
-        end
+        UIHelpers.closeWidget(self, "quests_widget")
         self:showQuestsView()
         -- Force full screen refresh for e-ink display
         UIManager:setDirty(nil, "full")
@@ -328,7 +324,7 @@ function Quests:toggleQuestComplete(quest)
     end
 
     -- Refresh
-    UIManager:close(self.quests_widget)
+    UIHelpers.closeWidget(self, "quests_widget")
     self:showQuestsView()
     UIManager:setDirty("all", "ui")
 
@@ -366,7 +362,7 @@ function Quests:skipQuest(quest)
     })
 
     -- Refresh
-    UIManager:close(self.quests_widget)
+    UIHelpers.closeWidget(self, "quests_widget")
     self:showQuestsView()
     UIManager:setDirty("all", "ui")
 end
@@ -378,7 +374,7 @@ function Quests:incrementQuestProgress(quest)
     local updated = Data:incrementQuestProgress(self.current_type, quest.id)
     if updated then
         -- Refresh
-        UIManager:close(self.quests_widget)
+        UIHelpers.closeWidget(self, "quests_widget")
         self:showQuestsView()
         UIManager:setDirty("all", "ui")
 
@@ -399,7 +395,7 @@ function Quests:decrementQuestProgress(quest)
     local updated = Data:decrementQuestProgress(self.current_type, quest.id)
     if updated then
         -- Refresh
-        UIManager:close(self.quests_widget)
+        UIHelpers.closeWidget(self, "quests_widget")
         self:showQuestsView()
         UIManager:setDirty("all", "ui")
     end
@@ -442,7 +438,7 @@ function Quests:showProgressInput(quest)
                     local quest_completed = updated and updated.completed
                     UIManager:close(dialog)
                     -- Refresh
-                    UIManager:close(self.quests_widget)
+                    UIHelpers.closeWidget(self, "quests_widget")
                     self:showQuestsView()
                     UIManager:setDirty("all", "ui")
 
@@ -903,9 +899,7 @@ function Quests:saveQuest(is_edit)
     end
 
     -- Refresh - close old widget and show new one with proper dirty refresh
-    if self.quests_widget then
-        UIManager:close(self.quests_widget)
-    end
+    UIHelpers.closeWidget(self, "quests_widget")
     self:showQuestsView()
     -- Force a full UI refresh to ensure the new widget renders correctly
     UIManager:setDirty("all", "ui")
@@ -934,9 +928,7 @@ function Quests:confirmDeleteQuest(quest)
                         text = _("Quest deleted"),
                         timeout = 2,
                     })
-                    if self.quests_widget then
-                        UIManager:close(self.quests_widget)
-                    end
+                    UIHelpers.closeWidget(self, "quests_widget")
                     self:showQuestsView()
                     UIManager:setDirty("all", "ui")
                 end,

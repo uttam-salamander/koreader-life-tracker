@@ -590,7 +590,7 @@ function Journal:showJournalView()
     local ui = self.ui
 
     local function on_tab_change(tab_id)
-        UIManager:close(journal.journal_widget)
+        UIHelpers.closeWidget(journal, "journal_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -640,7 +640,7 @@ function Journal:showJournalView()
     }
     UIHelpers.setupCornerGestures(self.journal_widget, self, gesture_dims)
     UIHelpers.setupSwipeToClose(self.journal_widget, function()
-        UIManager:close(self.journal_widget)
+        UIHelpers.closeWidget(journal, "journal_widget")
     end, gesture_dims)
 
     -- Tap anywhere in content area (below top zone) to show actions menu
@@ -1079,7 +1079,7 @@ function Journal:showEditPersistentNotes()
                         UIManager:close(self.notes_dialog)
                         Data:savePersistentNotes(text or "")
                         -- Refresh journal view
-                        UIManager:close(self.journal_widget)
+                        UIHelpers.closeWidget(self, "journal_widget")
                         self:showJournalView()
                         UIManager:setDirty("all", "ui")
                     end,
@@ -1119,7 +1119,7 @@ function Journal:showAddReflection()
                         if text and text ~= "" then
                             self:saveReflection(text)
                             -- Refresh journal view
-                            UIManager:close(self.journal_widget)
+                            UIHelpers.closeWidget(self, "journal_widget")
                             self:showJournalView()
                             UIManager:setDirty("all", "ui")
                         end

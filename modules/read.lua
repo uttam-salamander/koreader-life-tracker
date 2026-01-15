@@ -895,7 +895,7 @@ function Read:showReadView()
     local ui = self.ui
     local read_module = self
     local function on_tab_change(tab_id)
-        UIManager:close(read_module.read_widget)
+        UIHelpers.closeWidget(read_module, "read_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -949,7 +949,7 @@ function Read:showReadView()
     }
     UIHelpers.setupCornerGestures(self.read_widget, self, gesture_dims)
     UIHelpers.setupSwipeToClose(self.read_widget, function()
-        UIManager:close(self.read_widget)
+        UIHelpers.closeWidget(read_module, "read_widget")
     end, gesture_dims)
 
     UIManager:show(self.read_widget)

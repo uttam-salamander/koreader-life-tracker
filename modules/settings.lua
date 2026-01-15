@@ -214,7 +214,7 @@ function Settings:showSettingsView()
                 ok_callback = function()
                     user_settings.sleep_screen_enabled = not currently_enabled
                     Data:saveUserSettings(user_settings)
-                    UIManager:close(self.settings_widget)
+                    UIHelpers.closeWidget(self, "settings_widget")
                     self:showSettingsView()
                 end,
             })
@@ -237,7 +237,7 @@ function Settings:showSettingsView()
             user_settings.high_contrast = not user_settings.high_contrast
             Data:saveUserSettings(user_settings)
             UIConfig:invalidateAll()  -- Refresh colors and dimensions (borders change too)
-            UIManager:close(self.settings_widget)
+            UIHelpers.closeWidget(self, "settings_widget")
             self:showSettingsView()
         end,
     })
@@ -330,7 +330,7 @@ function Settings:showSettingsView()
     local ui = self.ui
     local settings = self
     local function on_tab_change(tab_id)
-        UIManager:close(settings.settings_widget)
+        UIHelpers.closeWidget(settings, "settings_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -382,7 +382,7 @@ function Settings:showSettingsView()
 
     -- Setup swipe-to-close
     UIHelpers.setupSwipeToClose(self.settings_widget, function()
-        UIManager:close(self.settings_widget)
+        UIHelpers.closeWidget(settings, "settings_widget")
     end, gesture_dims)
 
     UIManager:show(self.settings_widget)
@@ -1311,7 +1311,7 @@ function Settings:showUIScaleSelector(_ui, user_settings)
                     timeout = 2,
                 })
                 -- Close and reopen settings to apply new scale
-                UIManager:close(self.settings_widget)
+                UIHelpers.closeWidget(self, "settings_widget")
                 -- Schedule settings view to reopen after message shows
                 UIManager:scheduleIn(0.5, function()
                     self:showSettingsView()
@@ -1450,10 +1450,8 @@ function Settings:confirmRestore(ui, backup)
                     timeout = 3,
                 })
                 -- Refresh settings view
-                if self.settings_widget then
-                    UIManager:close(self.settings_widget)
-                    self:showSettingsView()
-                end
+                UIHelpers.closeWidget(self, "settings_widget")
+                self:showSettingsView()
             else
                 UIManager:show(InfoMessage:new{
                     text = _("Restore failed: ") .. (result or "Unknown error"),
@@ -1531,10 +1529,8 @@ function Settings:confirmResetData(_ui)
                         timeout = 3,
                     })
                     -- Refresh settings view
-                    if self.settings_widget then
-                        UIManager:close(self.settings_widget)
-                        self:showSettingsView()
-                    end
+                    UIHelpers.closeWidget(self, "settings_widget")
+                    self:showSettingsView()
                 end,
             }},
         },

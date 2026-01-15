@@ -143,9 +143,7 @@ function Dashboard:setTodayEnergy(energy)
     Data:addMoodEntry(today, current_hour, energy, self.user_settings.time_slots)
 
     -- Refresh dashboard
-    if self.dashboard_widget then
-        UIManager:close(self.dashboard_widget)
-    end
+    UIHelpers.closeWidget(self, "dashboard_widget")
     self:showDashboardView()
 
     -- Force screen refresh for e-ink
@@ -424,7 +422,7 @@ function Dashboard:showDashboardView()
 
     -- Tab change callback
     local function on_tab_change(tab_id)
-        UIManager:close(dashboard.dashboard_widget)
+        UIHelpers.closeWidget(dashboard, "dashboard_widget")
         Navigation:navigateTo(tab_id, ui)
     end
 
@@ -480,7 +478,7 @@ function Dashboard:showDashboardView()
 
     -- Setup swipe-to-close gesture
     UIHelpers.setupSwipeToClose(self.dashboard_widget, function()
-        UIManager:close(self.dashboard_widget)
+        UIHelpers.closeWidget(dashboard, "dashboard_widget")
     end, gesture_dims)
 
     UIManager:show(self.dashboard_widget)
@@ -652,9 +650,7 @@ function Dashboard:buildQuestRow(quest, quest_type)
         content_width = content_width,
         show_streak = true,
         on_refresh = function()
-            if dashboard.dashboard_widget then
-                UIManager:close(dashboard.dashboard_widget)
-            end
+            UIHelpers.closeWidget(dashboard, "dashboard_widget")
             dashboard:showDashboardView()
             UIManager:setDirty("all", "ui")
         end,
@@ -729,9 +725,7 @@ function Dashboard:skipQuest(quest, quest_type)
     Data:saveAllQuests(all_quests)
 
     -- Refresh dashboard
-    if self.dashboard_widget then
-        UIManager:close(self.dashboard_widget)
-    end
+    UIHelpers.closeWidget(self, "dashboard_widget")
     self:showDashboardView()
 
     -- Force immediate screen refresh
@@ -753,9 +747,7 @@ function Dashboard:incrementQuestProgress(quest, quest_type)
     local updated = Data:incrementQuestProgress(quest_type, quest.id)
     if updated then
         -- Refresh dashboard
-        if self.dashboard_widget then
-            UIManager:close(self.dashboard_widget)
-        end
+        UIHelpers.closeWidget(self, "dashboard_widget")
         self:showDashboardView()
         UIManager:setDirty("all", "ui")
 
@@ -776,9 +768,7 @@ function Dashboard:decrementQuestProgress(quest, quest_type)
     local updated = Data:decrementQuestProgress(quest_type, quest.id)
     if updated then
         -- Refresh dashboard
-        if self.dashboard_widget then
-            UIManager:close(self.dashboard_widget)
-        end
+        UIHelpers.closeWidget(self, "dashboard_widget")
         self:showDashboardView()
         UIManager:setDirty("all", "ui")
     end
@@ -878,9 +868,7 @@ function Dashboard:showProgressInput(quest, quest_type)
                         UIManager:close(dialog)
 
                         -- Refresh dashboard
-                        if self.dashboard_widget then
-                            UIManager:close(self.dashboard_widget)
-                        end
+                        UIHelpers.closeWidget(self, "dashboard_widget")
                         self:showDashboardView()
                         UIManager:setDirty("all", "ui")
 
@@ -920,9 +908,7 @@ function Dashboard:toggleQuestComplete(quest, quest_type)
     end
 
     -- Refresh dashboard
-    if self.dashboard_widget then
-        UIManager:close(self.dashboard_widget)
-    end
+    UIHelpers.closeWidget(self, "dashboard_widget")
     self:showDashboardView()
 
     -- Force immediate screen refresh

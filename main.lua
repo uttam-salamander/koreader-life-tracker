@@ -25,16 +25,11 @@ local Data, Settings, Quests, Dashboard, Timeline, Reminders, Journal, ReadingSt
 local LifeTracker = WidgetContainer:extend{
     name = "lifetracker",
     is_doc_only = false,
-    reminder_timer_active = false,  -- Track if timer is running
-    reminder_task = nil,  -- Store scheduled task for cleanup
 }
 
 function LifeTracker:init()
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
-
-    -- Start reminder check timer
-    self:scheduleReminderCheck()
 
     -- Seed random number generator for unique ID generation
     math.randomseed(os.time())
@@ -217,54 +212,6 @@ function LifeTracker:onShowLifeTrackerTimeline()
     return true
 end
 
---[[--
-Schedule periodic reminder checks.
-Checks every minute for due reminders.
---]]
-function LifeTracker:scheduleReminderCheck()
-    if self.reminder_timer_active then
-        return  -- Already scheduled
-    end
-    self.reminder_timer_active = true
-    self:doReminderCheck()
-end
-
-function LifeTracker:doReminderCheck()
-    if not self.reminder_timer_active then
-        return  -- Timer was stopped
-    end
-
-    self:checkReminders()
-
-    -- Schedule next check (60 seconds) and store reference for cleanup
-    self.reminder_task = UIManager:scheduleIn(60, function()
-        self:doReminderCheck()
-    end)
-end
-
-function LifeTracker:stopReminderCheck()
-    self.reminder_timer_active = false
-    -- Cancel any pending timer to prevent memory leak
-    if self.reminder_task then
-        UIManager:unschedule(self.reminder_task)
-        self.reminder_task = nil
-    end
-end
-
---[[--
-Check for due reminders and show notifications.
---]]
-function LifeTracker:checkReminders()
-    if not Reminders then
-        Reminders = require("modules/reminders")
-    end
-
-    local due_reminders = Reminders:checkDueReminders()
-    for _, reminder in ipairs(due_reminders) do
-        Reminders:showNotification(reminder)
-    end
-end
-
 -- Lazy load SleepScreen module
 function LifeTracker:getSleepScreen()
     if not SleepScreen then
@@ -357,11 +304,9 @@ end
 
 --[[--
 Called when plugin is disabled or KOReader exits.
-Clean up timer and database connections to prevent memory/resource leaks.
+Clean up database connections to prevent memory/resource leaks.
 --]]
 function LifeTracker:onCloseWidget()
-    self:stopReminderCheck()
-
     -- Close any open module widgets to prevent memory leaks
     if Dashboard and Dashboard.dashboard_widget then
         UIManager:close(Dashboard.dashboard_widget)
@@ -370,6 +315,10 @@ function LifeTracker:onCloseWidget()
     if Quests and Quests.quests_widget then
         UIManager:close(Quests.quests_widget)
         Quests.quests_widget = nil
+    end
+    if Timeline and Timeline.timeline_widget then
+        UIManager:close(Timeline.timeline_widget)
+        Timeline.timeline_widget = nil
     end
     if Journal and Journal.journal_widget then
         UIManager:close(Journal.journal_widget)
