@@ -476,7 +476,7 @@ function Timeline:buildQuestRow(quest, content_width)
     -- Check if this quest is skipped for the viewed date
     local is_skipped = (quest.skipped_date == view_date)
 
-    -- Find quest type for callbacks
+    -- Find quest type
     local quest_type = nil
     local all_quests = Data:loadAllQuests()
     for qtype, quests in pairs(all_quests) do
@@ -494,31 +494,14 @@ function Timeline:buildQuestRow(quest, content_width)
         content_width = content_width,
         date = view_date,
         show_streak = false,  -- Timeline doesn't show streaks
-        callbacks = {
-            skip_text = is_skipped and "Undo" or "Skip",
-            on_complete = function(q)
-                timeline:toggleQuestComplete(q)
-            end,
-            on_skip = function(q)
-                if is_skipped then
-                    timeline:unskipQuest(q)
-                else
-                    timeline:skipQuest(q)
-                end
-            end,
-            on_plus = function(q)
-                timeline:incrementQuestProgress(q)
-            end,
-            on_minus = function(q)
-                timeline:decrementQuestProgress(q)
-            end,
-            on_refresh = function()
-                if timeline.timeline_widget then
-                    UIManager:close(timeline.timeline_widget)
-                end
-                timeline:showTimelineView()
-            end,
-        },
+        is_skipped = is_skipped,
+        on_refresh = function()
+            if timeline.timeline_widget then
+                UIManager:close(timeline.timeline_widget)
+            end
+            timeline:showTimelineView()
+            UIManager:setDirty("all", "ui")
+        end,
     })
 end
 

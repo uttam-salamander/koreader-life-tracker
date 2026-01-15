@@ -643,6 +643,9 @@ function Data:completeQuest(quest_type, quest_id, date)
                 quest.completions = {}
             end
 
+            -- Check if already completed today (same-day re-completion)
+            local already_completed_today = self:isQuestCompletedOnDate(quest, completion_date)
+
             -- Add date to compact completions
             self:addDateToCompletions(quest.completions, completion_date)
 
@@ -650,6 +653,19 @@ function Data:completeQuest(quest_type, quest_id, date)
             local most_recent = self:getMostRecentCompletion(quest.completions)
             quest.completed = true
             quest.completed_date = most_recent or completion_date
+
+            -- Update streak atomically (only if not already completed today)
+            if not already_completed_today then
+                local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
+                if self:isQuestCompletedOnDate(quest, yesterday) then
+                    quest.streak = (quest.streak or 0) + 1
+                elseif quest.completed_date == completion_date then
+                    -- First completion, start streak at 1
+                    quest.streak = math.max(quest.streak or 0, 1)
+                else
+                    quest.streak = 1
+                end
+            end
 
             self:saveAllQuests(quests)
             return quest
@@ -687,6 +703,20 @@ function Data:uncompleteQuest(quest_type, quest_id, date)
                 quest.completed_date = nil
             end
 
+            -- Recalculate streak from today backwards
+            local streak = 0
+            local today = os.time()
+            for day_offset = 0, 365 do
+                local check_time = today - day_offset * 86400
+                local check_date = os.date("%Y-%m-%d", check_time)
+                if self:isQuestCompletedOnDate(quest, check_date) then
+                    streak = streak + 1
+                else
+                    break
+                end
+            end
+            quest.streak = streak
+
             self:saveAllQuests(quests)
             return quest
         end
@@ -716,10 +746,13 @@ function Data:incrementQuestProgress(quest_type, quest_id)
             -- Increment progress
             quest.progress_current = (quest.progress_current or 0) + 1
 
-            -- Auto-complete if target reached
+            -- Auto-complete if target reached - use compact format
             if quest.progress_current >= (quest.progress_target or 1) then
+                if not quest.completions then quest.completions = {} end
+                self:addDateToCompletions(quest.completions, today)
+                local most_recent = self:getMostRecentCompletion(quest.completions)
                 quest.completed = true
-                quest.completed_date = today
+                quest.completed_date = most_recent or today
             end
 
             self:saveAllQuests(quests)

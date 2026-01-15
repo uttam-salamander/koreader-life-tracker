@@ -651,26 +651,13 @@ function Dashboard:buildQuestRow(quest, quest_type)
         quest_type = quest_type,
         content_width = content_width,
         show_streak = true,
-        callbacks = {
-            on_complete = function(q, qtype)
-                dashboard:handleQuestComplete(q, qtype)
-            end,
-            on_skip = function(q, qtype)
-                dashboard:handleQuestSkip(q, qtype)
-            end,
-            on_plus = function(q, qtype)
-                dashboard:handleProgressPlus(q, qtype)
-            end,
-            on_minus = function(q, qtype)
-                dashboard:handleProgressMinus(q, qtype)
-            end,
-            on_refresh = function()
-                if dashboard.dashboard_widget then
-                    UIManager:close(dashboard.dashboard_widget)
-                end
-                dashboard:showDashboardView()
-            end,
-        },
+        on_refresh = function()
+            if dashboard.dashboard_widget then
+                UIManager:close(dashboard.dashboard_widget)
+            end
+            dashboard:showDashboardView()
+            UIManager:setDirty("all", "ui")
+        end,
     })
 
     -- Update Y tracker (still needed for layout purposes)
@@ -926,29 +913,8 @@ function Dashboard:toggleQuestComplete(quest, quest_type)
     if was_completed then
         Data:uncompleteQuest(quest_type, quest.id)
     else
-        -- Complete the quest
-        local all_quests = Data:loadAllQuests()
-
-        for _, q in ipairs(all_quests[quest_type] or {}) do
-            if q.id == quest.id then
-                -- Update streak
-                if q.completed_date then
-                    local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
-                    if q.completed_date == yesterday then
-                        q.streak = (q.streak or 0) + 1
-                    elseif q.completed_date ~= today then
-                        q.streak = 1
-                    end
-                else
-                    q.streak = 1
-                end
-                q.completed = true
-                q.completed_date = today
-                break
-            end
-        end
-
-        Data:saveAllQuests(all_quests)
+        -- Data:completeQuest handles streak calculation atomically
+        Data:completeQuest(quest_type, quest.id, today)
         Quests:updateDailyLog()
         Quests:updateGlobalStreak()
     end

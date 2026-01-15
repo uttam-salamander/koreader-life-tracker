@@ -285,32 +285,13 @@ function Quests:buildQuestRow(quest, content_width)
         quest_type = self.current_type,
         content_width = content_width,
         show_streak = true,
-        callbacks = {
-            on_complete = function(q)
-                quests_module:toggleQuestComplete(q)
-            end,
-            on_skip = function(q)
-                quests_module:skipQuest(q)
-            end,
-            on_plus = function(q)
-                quests_module:incrementQuestProgress(q)
-            end,
-            on_minus = function(q)
-                quests_module:decrementQuestProgress(q)
-            end,
-            on_edit = function(q)
-                quests_module:showEditQuestDialog(q)
-            end,
-            on_delete = function(q)
-                quests_module:confirmDeleteQuest(q)
-            end,
-            on_refresh = function()
-                if quests_module.quests_widget then
-                    UIManager:close(quests_module.quests_widget)
-                end
-                quests_module:showQuestsView()
-            end,
-        },
+        on_refresh = function()
+            if quests_module.quests_widget then
+                UIManager:close(quests_module.quests_widget)
+            end
+            quests_module:showQuestsView()
+            UIManager:setDirty("all", "ui")
+        end,
     })
 end
 
@@ -340,32 +321,8 @@ function Quests:toggleQuestComplete(quest)
     if was_completed then
         Data:uncompleteQuest(self.current_type, quest.id)
     else
-        local quests = Data:loadAllQuests()
-
-        for _, q in ipairs(quests[self.current_type]) do
-            if q.id == quest.id then
-                -- Update streak
-                if q.completed_date then
-                    local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
-                    if q.completed_date == yesterday then
-                        q.streak = (q.streak or 0) + 1
-                    elseif q.completed_date ~= today then
-                        -- Missed a day, reset streak
-                        q.streak = 1
-                    end
-                    -- If completed_date == today, keep current streak (already counted)
-                else
-                    -- No previous completion date (new quest or uncompleted)
-                    -- Preserve streak if exists (toggle off/on same day), else start at 1
-                    q.streak = math.max(q.streak or 0, 1)
-                end
-                q.completed = true
-                q.completed_date = today
-                break
-            end
-        end
-        Data:saveAllQuests(quests)
-
+        -- Data:completeQuest handles streak calculation atomically
+        Data:completeQuest(self.current_type, quest.id, today)
         self:updateDailyLog()
         self:updateGlobalStreak()
     end

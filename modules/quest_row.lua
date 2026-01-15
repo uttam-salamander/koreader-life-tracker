@@ -1,6 +1,7 @@
 --[[--
 Shared Quest Row UI component.
-Provides consistent quest row rendering across Dashboard, Quests, and Timeline modules.
+Provides consistent quest row rendering and operations across all modules.
+Handles quest completion, skip, and progress internally.
 
 @module lifetracker.quest_row
 --]]
@@ -23,10 +24,166 @@ local UIManager = require("ui/uimanager")
 local Screen = Device.screen
 local _ = require("gettext")
 
+local logger = require("logger")
+
 local Data = require("modules/data")
 local UIConfig = require("modules/ui_config")
+local Celebration = require("modules/celebration")
 
 local QuestRow = {}
+
+local function log(...)
+    logger.info("QuestRow:", ...)
+end
+
+--[[--
+Toggle quest completion and refresh the view.
+@param quest table The quest object
+@param quest_type string "daily", "weekly", or "monthly"
+@param date string Date to toggle completion for
+@param on_refresh function Callback to refresh the view
+--]]
+function QuestRow.handleComplete(quest, quest_type, date, on_refresh)
+    -- Validate quest parameter
+    if not quest or not quest.id then
+        log("handleComplete called with invalid quest")
+        return
+    end
+
+    local was_completed = Data:isQuestCompletedOnDate(quest, date)
+
+    if was_completed then
+        Data:uncompleteQuest(quest_type, quest.id, date)
+    else
+        -- Data:completeQuest now handles streak calculation atomically
+        Data:completeQuest(quest_type, quest.id, date)
+    end
+
+    -- Refresh view
+    if on_refresh then
+        on_refresh()
+    end
+
+    -- Show feedback
+    UIManager:nextTick(function()
+        if was_completed then
+            UIManager:show(InfoMessage:new{
+                text = _("Quest marked incomplete"),
+                timeout = 1,
+            })
+        else
+            Celebration:showCompletion()
+        end
+    end)
+end
+
+--[[--
+Skip a quest for the given date.
+@param quest table The quest object
+@param quest_type string "daily", "weekly", or "monthly"
+@param date string Date to skip for
+@param on_refresh function Callback to refresh the view
+--]]
+function QuestRow.handleSkip(quest, quest_type, date, on_refresh)
+    if not quest or not quest.id then
+        log("handleSkip called with invalid quest")
+        return
+    end
+
+    local quests = Data:loadAllQuests()
+    for _, q in ipairs(quests[quest_type] or {}) do
+        if q.id == quest.id then
+            q.skipped_date = date
+            break
+        end
+    end
+    Data:saveAllQuests(quests)
+
+    if on_refresh then
+        on_refresh()
+    end
+
+    UIManager:show(InfoMessage:new{
+        text = _("Quest skipped for today"),
+        timeout = 1,
+    })
+end
+
+--[[--
+Unskip a quest (clear skipped status).
+@param quest table The quest object
+@param quest_type string "daily", "weekly", or "monthly"
+@param on_refresh function Callback to refresh the view
+--]]
+function QuestRow.handleUnskip(quest, quest_type, on_refresh)
+    if not quest or not quest.id then
+        log("handleUnskip called with invalid quest")
+        return
+    end
+
+    local quests = Data:loadAllQuests()
+    for _, q in ipairs(quests[quest_type] or {}) do
+        if q.id == quest.id then
+            q.skipped_date = nil
+            break
+        end
+    end
+    Data:saveAllQuests(quests)
+
+    if on_refresh then
+        on_refresh()
+    end
+
+    UIManager:show(InfoMessage:new{
+        text = _("Quest restored"),
+        timeout = 1,
+    })
+end
+
+--[[--
+Increment progress for a progressive quest.
+@param quest table The quest object
+@param quest_type string "daily", "weekly", or "monthly"
+@param on_refresh function Callback to refresh the view
+--]]
+function QuestRow.handlePlus(quest, quest_type, on_refresh)
+    if not quest or not quest.id then
+        log("handlePlus called with invalid quest")
+        return
+    end
+
+    local updated = Data:incrementQuestProgress(quest_type, quest.id)
+
+    if updated then
+        if on_refresh then
+            on_refresh()
+        end
+
+        if updated.completed then
+            UIManager:nextTick(function()
+                Celebration:showCompletion()
+            end)
+        end
+    end
+end
+
+--[[--
+Decrement progress for a progressive quest.
+@param quest table The quest object
+@param quest_type string "daily", "weekly", or "monthly"
+@param on_refresh function Callback to refresh the view
+--]]
+function QuestRow.handleMinus(quest, quest_type, on_refresh)
+    if not quest or not quest.id then
+        log("handleMinus called with invalid quest")
+        return
+    end
+
+    local updated = Data:decrementQuestProgress(quest_type, quest.id)
+    if updated and on_refresh then
+        on_refresh()
+    end
+end
 
 -- Dimension helpers
 local function getTouchTargetHeight()
@@ -51,6 +208,8 @@ Build a 30-day heatmap string for a specific quest.
 @return string ASCII heatmap representation
 --]]
 function QuestRow.buildQuestHeatmap(quest)
+    if not quest then return "No data" end
+
     local today = os.time()
     local lines = {}
 
@@ -79,11 +238,12 @@ end
 Show quest details dialog with heatmap and action buttons.
 @param quest table The quest object
 @param quest_type string "daily", "weekly", or "monthly"
-@param callbacks table Callback functions {on_complete, on_edit, on_delete, on_close}
+@param options table Options {on_refresh}
 @param date string|nil Date context (defaults to today)
 --]]
-function QuestRow.showDetailsDialog(quest, quest_type, callbacks, date)
+function QuestRow.showDetailsDialog(quest, quest_type, options, date)
     local check_date = date or os.date("%Y-%m-%d")
+    local on_refresh = options and options.on_refresh
     local is_completed = Data:isQuestCompletedOnDate(quest, check_date)
 
     -- Build heatmap
@@ -122,40 +282,27 @@ function QuestRow.showDetailsDialog(quest, quest_type, callbacks, date)
             text = complete_text,
             callback = function()
                 UIManager:close(dialog)
-                if callbacks.on_complete then
-                    callbacks.on_complete(quest, quest_type)
-                end
+                QuestRow.handleComplete(quest, quest_type, check_date, on_refresh)
             end,
         }},
         {{
             text = _("Edit Quest"),
             callback = function()
                 UIManager:close(dialog)
-                if callbacks.on_edit then
-                    callbacks.on_edit(quest, quest_type)
-                else
-                    QuestRow.showEditDialog(quest, quest_type, callbacks.on_refresh)
-                end
+                QuestRow.showEditDialog(quest, quest_type, on_refresh)
             end,
         }},
         {{
             text = _("Delete Quest"),
             callback = function()
                 UIManager:close(dialog)
-                if callbacks.on_delete then
-                    callbacks.on_delete(quest, quest_type)
-                else
-                    QuestRow.showDeleteConfirmation(quest, quest_type, callbacks.on_refresh)
-                end
+                QuestRow.showDeleteConfirmation(quest, quest_type, on_refresh)
             end,
         }},
         {{
             text = _("Close"),
             callback = function()
                 UIManager:close(dialog)
-                if callbacks.on_close then
-                    callbacks.on_close()
-                end
             end,
         }},
     }
@@ -282,27 +429,29 @@ Build a quest row widget.
   - content_width: number Available width
   - date: string|nil Date context (defaults to today)
   - show_streak: boolean Show streak in title (default true)
-  - callbacks: table {on_complete, on_skip, on_plus, on_minus, on_title_tap, on_refresh}
+  - is_skipped: boolean Whether quest is skipped (for showing Undo button)
+  - on_refresh: function Callback to refresh the view after operations
 @return Widget The quest row widget
 --]]
 function QuestRow.build(quest, options)
+    if not quest or not quest.id then
+        log("build called with invalid quest")
+        return nil
+    end
+
+    options = options or {}
     local quest_type = options.quest_type or "daily"
     local content_width = options.content_width or (Screen:getWidth() - Size.padding.large * 2)
     local check_date = options.date or os.date("%Y-%m-%d")
     local show_streak = options.show_streak ~= false
-    local callbacks = options.callbacks or {}
+    local is_skipped = options.is_skipped or false
+    local on_refresh = options.on_refresh
     local colors = UIConfig:getColors()
 
     -- Check completion status for the given date
     local is_completed = Data:isQuestCompletedOnDate(quest, check_date)
     local status_bg = (is_completed and colors.completed_bg) or colors.background
     local text_color = (is_completed and colors.muted) or colors.foreground
-
-    -- Check if progressive quest needs daily reset
-    local today = os.date("%Y-%m-%d")
-    if quest.is_progressive and quest.progress_last_date ~= today then
-        quest.progress_current = 0
-    end
 
     -- Build quest title with optional streak
     local quest_text = quest.title
@@ -313,18 +462,11 @@ function QuestRow.build(quest, options)
     local row
     local BUTTON_GAP = UIConfig:dim("button_gap") or 2
 
-    -- Default title tap handler shows details dialog
+    -- Title tap handler shows details dialog
     local function on_title_tap()
-        if callbacks.on_title_tap then
-            callbacks.on_title_tap(quest, quest_type)
-        else
-            QuestRow.showDetailsDialog(quest, quest_type, {
-                on_complete = callbacks.on_complete,
-                on_edit = callbacks.on_edit,
-                on_delete = callbacks.on_delete,
-                on_refresh = callbacks.on_refresh,
-            }, check_date)
-        end
+        QuestRow.showDetailsDialog(quest, quest_type, {
+            on_refresh = on_refresh,
+        }, check_date)
     end
 
     if quest.is_progressive then
@@ -332,6 +474,13 @@ function QuestRow.build(quest, options)
         local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
         local PROGRESS_WIDTH = getProgressWidth()
         local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - BUTTON_GAP * 2 - Size.padding.small
+
+        -- Progress values for display and button states
+        -- Check if progress should be reset for new day (display only, Data layer handles actual reset)
+        local today = os.date("%Y-%m-%d")
+        local current = (quest.progress_last_date == today) and (quest.progress_current or 0) or 0
+        local target = quest.progress_target or 1
+        local progress_complete = current >= target
 
         -- Minus button
         local minus_button = Button:new{
@@ -345,16 +494,12 @@ function QuestRow.build(quest, options)
             text_font_size = 16,
             text_font_bold = true,
             callback = function()
-                if callbacks.on_minus then
-                    callbacks.on_minus(quest, quest_type)
-                end
+                QuestRow.handleMinus(quest, quest_type, on_refresh)
             end,
         }
 
-        -- Progress display
-        local current = quest.progress_current or 0
-        local target = quest.progress_target or 1
-        local pct = math.min(1, current / target)
+        -- Progress display (guard against division by zero)
+        local pct = target > 0 and math.min(1, current / target) or 0
         local progress_bg = is_completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
         local progress_text = string.format("%d/%d", current, target)
 
@@ -374,7 +519,7 @@ function QuestRow.build(quest, options)
             },
         }
 
-        -- Plus button
+        -- Plus button - enabled when progress is not yet complete
         local plus_button = Button:new{
             text = "+",
             width = SMALL_BUTTON_WIDTH,
@@ -385,11 +530,9 @@ function QuestRow.build(quest, options)
             text_font_face = "cfont",
             text_font_size = 16,
             text_font_bold = true,
-            enabled = not is_completed,
+            enabled = not progress_complete,
             callback = function()
-                if callbacks.on_plus then
-                    callbacks.on_plus(quest, quest_type)
-                end
+                QuestRow.handlePlus(quest, quest_type, on_refresh)
             end,
         }
 
@@ -420,7 +563,7 @@ function QuestRow.build(quest, options)
             title_button,
         }
     else
-        -- Binary quest layout: [Done] [Skip] [Title]
+        -- Binary quest layout: [Done] [Skip/Undo] [Title]
         local title_width = content_width - getButtonWidth() * 2 - BUTTON_GAP - Size.padding.small
 
         -- Complete button
@@ -436,14 +579,12 @@ function QuestRow.build(quest, options)
             text_font_size = 12,
             text_font_bold = true,
             callback = function()
-                if callbacks.on_complete then
-                    callbacks.on_complete(quest, quest_type)
-                end
+                QuestRow.handleComplete(quest, quest_type, check_date, on_refresh)
             end,
         }
 
-        -- Skip button
-        local skip_text = callbacks.skip_text or "Skip"
+        -- Skip/Undo button
+        local skip_text = is_skipped and "Undo" or "Skip"
         local skip_button = Button:new{
             text = skip_text,
             width = getButtonWidth(),
@@ -455,8 +596,10 @@ function QuestRow.build(quest, options)
             text_font_size = 10,
             text_font_bold = false,
             callback = function()
-                if callbacks.on_skip then
-                    callbacks.on_skip(quest, quest_type)
+                if is_skipped then
+                    QuestRow.handleUnskip(quest, quest_type, on_refresh)
+                else
+                    QuestRow.handleSkip(quest, quest_type, check_date, on_refresh)
                 end
             end,
         }
