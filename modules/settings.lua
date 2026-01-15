@@ -243,6 +243,29 @@ function Settings:showSettingsView()
     })
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
 
+    -- UI Scale setting
+    local ui_scale = user_settings.ui_scale or 1.0
+    local scale_labels = {
+        [0.8] = _("Small"),
+        [1.0] = _("Normal"),
+        [1.2] = _("Large"),
+        [1.5] = _("Extra Large"),
+        [2.0] = _("Huge"),
+    }
+    local current_scale_label = scale_labels[ui_scale] or string.format("%.1fx", ui_scale)
+    table.insert(content, Button:new{
+        text = _("UI Scale: ") .. current_scale_label,
+        width = button_width,
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        margin = Size.margin.small,
+        padding = Size.padding.default,
+        callback = function()
+            self:showUIScaleSelector(self.ui, user_settings)
+        end,
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("xs")})
+
     -- ===== Data Section =====
     table.insert(content, self:createSectionHeader(_("Data"), content_width))
 
@@ -1251,6 +1274,58 @@ function Settings:showDurationSelector(ui, settings)
         close_callback = function()
             UIManager:close(menu)
             self:showCelebrationMenu(ui)
+        end,
+    }
+    UIManager:show(menu)
+end
+
+-- ============================================
+-- UI Scale Functions
+-- ============================================
+
+--[[--
+Show UI scale selector.
+--]]
+function Settings:showUIScaleSelector(_ui, user_settings)
+    local scales = {
+        { value = 0.8, label = _("Small (0.8x)") },
+        { value = 1.0, label = _("Normal (1.0x)") },
+        { value = 1.2, label = _("Large (1.2x)") },
+        { value = 1.5, label = _("Extra Large (1.5x)") },
+        { value = 2.0, label = _("Huge (2x)") },
+    }
+
+    local current_scale = user_settings.ui_scale or 1.0
+    local items = {}
+
+    for _idx, scale in ipairs(scales) do
+        local is_selected = math.abs(current_scale - scale.value) < 0.01
+        table.insert(items, {
+            text = is_selected and (scale.label .. _(" (selected)")) or scale.label,
+            callback = function()
+                user_settings.ui_scale = scale.value
+                Data:saveUserSettings(user_settings)
+                UIConfig:invalidateAll()  -- Refresh all cached UI values
+                UIManager:show(InfoMessage:new{
+                    text = _("UI Scale set to: ") .. scale.label .. _("\n\nRestarting view..."),
+                    timeout = 2,
+                })
+                -- Close and reopen settings to apply new scale
+                UIManager:close(self.settings_widget)
+                -- Schedule settings view to reopen after message shows
+                UIManager:scheduleIn(0.5, function()
+                    self:showSettingsView()
+                end)
+            end,
+        })
+    end
+
+    local menu
+    menu = Menu:new{
+        title = _("UI Scale"),
+        item_table = items,
+        close_callback = function()
+            UIManager:close(menu)
         end,
     }
     UIManager:show(menu)

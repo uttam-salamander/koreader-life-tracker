@@ -491,7 +491,7 @@ function QuestRow.build(quest, options)
             margin = 0,
             padding = Size.padding.small,
             text_font_face = "cfont",
-            text_font_size = 16,
+            text_font_size = UIConfig:fontSize("button_icon"),
             text_font_bold = true,
             callback = function()
                 QuestRow.handleMinus(quest, quest_type, on_refresh)
@@ -513,7 +513,7 @@ function QuestRow.build(quest, options)
                 dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = getTouchTargetHeight() - 10},
                 TextWidget:new{
                     text = progress_text,
-                    face = Font:getFace("cfont", 11),
+                    face = UIConfig:getFont("cfont", UIConfig:fontSize("progress")),
                     bold = is_completed,
                 },
             },
@@ -528,7 +528,7 @@ function QuestRow.build(quest, options)
             margin = 0,
             padding = Size.padding.small,
             text_font_face = "cfont",
-            text_font_size = 16,
+            text_font_size = UIConfig:fontSize("button_icon"),
             text_font_bold = true,
             enabled = not progress_complete,
             callback = function()
@@ -545,7 +545,7 @@ function QuestRow.build(quest, options)
             margin = 0,
             padding = Size.padding.small,
             text_font_face = "cfont",
-            text_font_size = 13,
+            text_font_size = UIConfig:fontSize("body_small"),
             text_font_bold = false,
             fgcolor = text_color,
             background = status_bg,
@@ -576,7 +576,7 @@ function QuestRow.build(quest, options)
             margin = 0,
             padding = Size.padding.small,
             text_font_face = "cfont",
-            text_font_size = 12,
+            text_font_size = UIConfig:fontSize("button_primary"),
             text_font_bold = true,
             callback = function()
                 QuestRow.handleComplete(quest, quest_type, check_date, on_refresh)
@@ -593,7 +593,7 @@ function QuestRow.build(quest, options)
             margin = 0,
             padding = Size.padding.small,
             text_font_face = "cfont",
-            text_font_size = 10,
+            text_font_size = UIConfig:fontSize("button_secondary"),
             text_font_bold = false,
             callback = function()
                 if is_skipped then
@@ -613,7 +613,7 @@ function QuestRow.build(quest, options)
             margin = 0,
             padding = Size.padding.small,
             text_font_face = "cfont",
-            text_font_size = 14,
+            text_font_size = UIConfig:fontSize("body"),
             text_font_bold = false,
             fgcolor = text_color,
             background = status_bg,

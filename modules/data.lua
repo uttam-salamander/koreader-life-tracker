@@ -206,6 +206,8 @@ local DEFAULT_SETTINGS = {
     today_energy = nil,
     today_date = nil,
     lock_screen_dashboard = false,
+    high_contrast = false,
+    ui_scale = 1.0,  -- UI scale factor (0.8 to 1.5)
     quotes = {
         "The journey of a thousand miles begins with a single step.",
         "Reading is dreaming with open eyes.",
@@ -246,6 +248,14 @@ function Data:loadUserSettings()
             quotes = DEFAULT_SETTINGS.quotes
         end
 
+        -- Load ui_scale with validation (0.8 to 2.0, default 1.0)
+        local ui_scale = s:readSetting("ui_scale")
+        if type(ui_scale) ~= "number" then
+            ui_scale = 1.0
+        else
+            ui_scale = math.max(0.8, math.min(2.0, ui_scale))
+        end
+
         return {
             energy_categories = energy,
             time_slots = slots,
@@ -256,6 +266,7 @@ function Data:loadUserSettings()
             lock_screen_dashboard = s:readSetting("lock_screen_dashboard") or false,
             sleep_screen_enabled = s:readSetting("sleep_screen_enabled") or false,
             high_contrast = s:readSetting("high_contrast") or false,
+            ui_scale = ui_scale,
             celebration = s:readSetting("celebration"),
             quotes = quotes,
         }
@@ -279,6 +290,7 @@ function Data:saveUserSettings(user_settings)
     s:saveSetting("lock_screen_dashboard", user_settings.lock_screen_dashboard)
     s:saveSetting("sleep_screen_enabled", user_settings.sleep_screen_enabled)
     s:saveSetting("high_contrast", user_settings.high_contrast)
+    s:saveSetting("ui_scale", user_settings.ui_scale)
     s:saveSetting("celebration", user_settings.celebration)
     s:saveSetting("quotes", user_settings.quotes)
     s:flush()

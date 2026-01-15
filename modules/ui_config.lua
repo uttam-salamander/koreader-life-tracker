@@ -26,6 +26,8 @@ local UIConfig = {
     _dimensions = nil,
     -- Cached color scheme
     _colors = nil,
+    -- Cached UI scale factor
+    _ui_scale = nil,
 }
 
 -- ============================================================================
@@ -110,12 +112,67 @@ function UIConfig:isEinkDevice()
 end
 
 -- ============================================================================
+-- UI Scale Factor
+-- ============================================================================
+
+--[[--
+Get the UI scale factor from user settings.
+Scale factor ranges from 0.8 (smaller) to 2.0 (larger), default 1.0.
+@treturn number Scale factor (default 1.0)
+--]]
+function UIConfig:getUIScale()
+    if self._ui_scale then
+        return self._ui_scale
+    end
+
+    local Data = require("modules/data")
+    local user_settings = Data:loadUserSettings()
+    local scale = user_settings.ui_scale or 1.0
+
+    -- Clamp to valid range
+    scale = math.max(0.8, math.min(2.0, scale))
+
+    self._ui_scale = scale
+    return scale
+end
+
+--[[--
+Invalidate cached UI scale (call when UI scale setting changes).
+--]]
+function UIConfig:invalidateUIScale()
+    self._ui_scale = nil
+end
+
+--[[--
+Scale a pixel value by both DPI and UI scale factor.
+Use this for dimensions that should respect the global UI scale.
+@tparam number pixels Base pixel value
+@treturn number Scaled pixel value
+--]]
+function UIConfig:scaleUI(pixels)
+    return Screen:scaleBySize(pixels) * self:getUIScale()
+end
+
+--[[--
+Scale a pixel value by DPI and UI scale, but clamp to max width.
+Use this for widths that must not exceed screen boundaries.
+@tparam number pixels Base pixel value
+@tparam number max_width Maximum width (defaults to screen width)
+@treturn number Scaled pixel value, clamped to max_width
+--]]
+function UIConfig:scaleUIWidth(pixels, max_width)
+    max_width = max_width or Screen:getWidth()
+    local scaled = self:scaleUI(pixels)
+    return math.min(scaled, max_width)
+end
+
+-- ============================================================================
 -- Scaled Dimensions
 -- ============================================================================
 
 --[[--
 Get scaled UI dimensions.
-All values are scaled based on screen DPI/size.
+All values are scaled based on screen DPI/size and UI scale factor.
 @treturn table Scaled dimension values
 --]]
 function UIConfig:getDimensions()
@@ -131,98 +188,125 @@ function UIConfig:getDimensions()
     -- Border multiplier for high contrast (2x thicker)
     local border_scale = high_contrast and 2 or 1
 
+    -- Get UI scale factor (0.8 to 1.5, default 1.0)
+    local ui_scale = self:getUIScale()
+
+    -- Screen dimensions for width clamping
+    local screen_width = Screen:getWidth()
+
+    -- Helper to scale by both DPI and UI scale
+    local function scaleUI(pixels)
+        return Screen:scaleBySize(pixels) * ui_scale
+    end
+
+    -- Helper to scale Size module values by UI scale
+    local function scaleSizeUI(size_value)
+        return math.floor(size_value * ui_scale)
+    end
+
+    -- Helper to scale width with maximum constraint
+    local function scaleUIWidth(pixels, max_ratio)
+        local scaled = scaleUI(pixels)
+        local max_width = screen_width * (max_ratio or 0.5)
+        return math.min(scaled, max_width)
+    end
+
     self._dimensions = {
-        -- Navigation
+        -- Navigation tab width - NOT scaled to avoid breaking side nav layout
         tab_width = Screen:scaleBySize(60),
 
         -- Touch targets (minimum 44px for accessibility, scaled)
-        touch_target_height = Size.item.height_default or Screen:scaleBySize(48),
-        button_width = Screen:scaleBySize(50),
-        small_button_width = Screen:scaleBySize(35),
+        touch_target_height = scaleSizeUI(Size.item.height_default or Screen:scaleBySize(48)),
+        button_width = scaleUIWidth(50, 0.2),
+        small_button_width = scaleUIWidth(35, 0.15),
 
         -- Row heights
-        row_height = Size.item.height_default or Screen:scaleBySize(50),
-        small_row_height = Screen:scaleBySize(40),
+        row_height = scaleSizeUI(Size.item.height_default or Screen:scaleBySize(50)),
+        small_row_height = scaleUI(40),
 
-        -- Tab dimensions
-        type_tab_width = Screen:scaleBySize(80),
-        type_tab_height = Screen:scaleBySize(40),
-        energy_tab_width = Screen:scaleBySize(90),
-        energy_tab_height = Screen:scaleBySize(44),
+        -- Tab dimensions - clamped to reasonable maximums
+        type_tab_width = scaleUIWidth(80, 0.25),
+        type_tab_height = scaleUI(40),
+        energy_tab_width = scaleUIWidth(90, 0.25),
+        energy_tab_height = scaleUI(44),
 
         -- Progress elements
-        progress_width = Screen:scaleBySize(70),
-        progress_bar_height = Screen:scaleBySize(4),
-        button_gap = Screen:scaleBySize(2),  -- Gap between inline buttons
+        progress_width = scaleUIWidth(70, 0.2),
+        progress_bar_height = scaleUI(4),
+        button_gap = scaleUI(2),  -- Gap between inline buttons
 
         -- Grid layout
         grid_columns = 3,  -- Responsive: could adjust based on screen width
 
-        -- Content padding (uses Size module for consistency)
-        padding_small = Size.padding.small,
-        padding_default = Size.padding.default,
-        padding_large = Size.padding.large,
-        margin_default = Size.margin.default,
+        -- Content padding (uses Size module for consistency, scaled by UI scale)
+        padding_small = scaleSizeUI(Size.padding.small),
+        padding_default = scaleSizeUI(Size.padding.default),
+        padding_large = scaleSizeUI(Size.padding.large),
+        margin_default = scaleSizeUI(Size.margin.default),
 
         -- Text heights
-        header_height = Screen:scaleBySize(28),
-        title_height = Screen:scaleBySize(24),
-        greeting_height = Screen:scaleBySize(30),
+        header_height = scaleUI(28),
+        title_height = scaleUI(24),
+        greeting_height = scaleUI(30),
 
         -- Borders (thicker in high contrast mode for better visibility)
-        border_thin = Size.border.thin * border_scale,
-        border_default = Size.border.default * border_scale,
-        border_thick = Size.border.thick * border_scale,
+        border_thin = math.max(1, math.floor(Size.border.thin * border_scale * ui_scale)),
+        border_default = math.max(1, math.floor(Size.border.default * border_scale * ui_scale)),
+        border_thick = math.max(1, math.floor(Size.border.thick * border_scale * ui_scale)),
 
         -- Page-level padding (left/right padding for all content pages)
-        page_padding = Screen:scaleBySize(12),
+        page_padding = scaleUI(12),
 
         -- ============================================================
         -- Typography Scale (standardized font sizes across all screens)
+        -- Font sizes are scaled by UI scale factor
         -- ============================================================
-        font_page_title = 20,       -- Main page headers (Dashboard, Quests, etc.)
-        font_section_header = 16,   -- Section titles (Today's Reminders, etc.)
-        font_body = 14,             -- Primary content text
-        font_body_small = 13,       -- Secondary content, quest titles
-        font_caption = 11,          -- Captions, labels, small text
-        font_button = 11,           -- Button text (standardized)
-        font_stat_value = 20,       -- Large stat numbers
-        font_stat_label = 10,       -- Stat labels below values
+        font_page_title = math.floor(20 * ui_scale),       -- Main page headers (Dashboard, Quests, etc.)
+        font_section_header = math.floor(16 * ui_scale),   -- Section titles (Today's Reminders, etc.)
+        font_body = math.floor(14 * ui_scale),             -- Primary content text
+        font_body_small = math.floor(13 * ui_scale),       -- Secondary content, quest titles
+        font_caption = math.floor(11 * ui_scale),          -- Captions, labels, small text
+        font_button = math.floor(11 * ui_scale),           -- Button text (standardized)
+        font_stat_value = math.floor(20 * ui_scale),       -- Large stat numbers
+        font_stat_label = math.floor(10 * ui_scale),       -- Stat labels below values
 
         -- Button-specific font sizes
-        font_button_icon = 16,      -- +/- button icons
-        font_button_primary = 12,   -- Done button text
-        font_button_secondary = 10, -- Skip button text
+        font_button_icon = math.floor(16 * ui_scale),      -- +/- button icons
+        font_button_primary = math.floor(12 * ui_scale),   -- Done button text
+        font_button_secondary = math.floor(10 * ui_scale), -- Skip button text
 
         -- Specialized element fonts
-        font_nav_button = 18,       -- Day navigation arrows
-        font_progress = 11,         -- Progress bar text (3/10)
-        font_heatmap_title = 18,    -- Heatmap section title
-        font_heatmap_label = 14,    -- Heatmap legend labels
-        font_graph = 11,            -- Line graph text (journal)
-        font_quote = 14,            -- Daily quote text
+        font_nav_button = math.floor(18 * ui_scale),       -- Day navigation arrows
+        font_progress = math.floor(11 * ui_scale),         -- Progress bar text (3/10)
+        font_heatmap_title = math.floor(18 * ui_scale),    -- Heatmap section title
+        font_heatmap_label = math.floor(14 * ui_scale),    -- Heatmap legend labels
+        font_graph = math.floor(11 * ui_scale),            -- Line graph text (journal)
+        font_quote = math.floor(14 * ui_scale),            -- Daily quote text
 
         -- ============================================================
         -- Spacing Scale (consistent negative space across all screens)
         -- ============================================================
-        spacing_xs = Screen:scaleBySize(4),   -- Between related items (tight)
-        spacing_sm = Screen:scaleBySize(8),   -- Between elements in a group
-        spacing_md = Screen:scaleBySize(12),  -- Between groups, after tabs
-        spacing_lg = Screen:scaleBySize(16),  -- Between sections
-        spacing_xl = Screen:scaleBySize(24),  -- Major section breaks
+        spacing_xs = scaleUI(4),   -- Between related items (tight)
+        spacing_sm = scaleUI(8),   -- Between elements in a group
+        spacing_md = scaleUI(12),  -- Between groups, after tabs
+        spacing_lg = scaleUI(16),  -- Between sections
+        spacing_xl = scaleUI(24),  -- Major section breaks
 
         -- ============================================================
         -- Stat Card Dimensions (for Read page and Dashboard)
         -- ============================================================
-        stat_card_height = Screen:scaleBySize(60),
-        stat_card_spacing = Screen:scaleBySize(10),
+        stat_card_height = scaleUI(60),
+        stat_card_spacing = scaleUI(10),
 
         -- ============================================================
         -- Dialog and Layout Constants
         -- ============================================================
         dialog_width_ratio = 0.8,   -- Standard dialog width (80% of screen)
-        row_gap = Screen:scaleBySize(2),     -- Gap between adjacent rows/buttons
-        section_gap = Screen:scaleBySize(4), -- Gap between sections
+        row_gap = scaleUI(2),     -- Gap between adjacent rows/buttons
+        section_gap = scaleUI(4), -- Gap between sections
+
+        -- Store UI scale for reference
+        _ui_scale = ui_scale,
     }
 
     return self._dimensions
@@ -303,6 +387,7 @@ function UIConfig:invalidateDimensions()
     self._dimensions = nil
     self._capabilities = nil  -- Screen dimensions may have changed
     self._font_scale = nil    -- Font scale may depend on dimensions
+    self._ui_scale = nil      -- UI scale may change
 end
 
 --[[--
@@ -313,6 +398,7 @@ function UIConfig:invalidateAll()
     self._capabilities = nil
     self._colors = nil
     self._font_scale = nil
+    self._ui_scale = nil
 end
 
 -- ============================================================================
@@ -519,13 +605,14 @@ end
 
 --[[--
 Get a scaled font size.
-Respects KOReader's font size settings for consistency.
+Respects KOReader's font size settings and UI scale for consistency.
 @tparam number base_size Base font size (designed for ~160 DPI)
 @treturn number Scaled font size
 --]]
 function UIConfig:getFontSize(base_size)
-    local scale = self:getFontScale()
-    return math.floor(base_size * scale)
+    local font_scale = self:getFontScale()
+    local ui_scale = self:getUIScale()
+    return math.floor(base_size * font_scale * ui_scale)
 end
 
 --[[--
@@ -536,6 +623,18 @@ Get a font face with scaled size.
 --]]
 function UIConfig:getFont(font_name, base_size)
     return Font:getFace(font_name, self:getFontSize(base_size))
+end
+
+--[[--
+Get a font face WITHOUT UI scaling (only KOReader font scale).
+Use this for fixed UI elements like navigation that shouldn't scale.
+@tparam string font_name Font name from Font.fontmap (e.g., "tfont", "cfont")
+@tparam number base_size Base font size
+@treturn table Font face object
+--]]
+function UIConfig:getFontFixed(font_name, base_size)
+    local font_scale = self:getFontScale()
+    return Font:getFace(font_name, math.floor(base_size * font_scale))
 end
 
 -- ============================================================================

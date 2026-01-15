@@ -122,7 +122,7 @@ function Navigation:buildTabColumn(current_tab, height)
             local char = tab.label:sub(i, i)
             table.insert(vertical_label, TextWidget:new{
                 text = char,
-                face = UIConfig:getFont("tfont", 14),
+                face = UIConfig:getFontFixed("tfont", 14),
                 fgcolor = fg_color,
                 bold = is_active,
             })
