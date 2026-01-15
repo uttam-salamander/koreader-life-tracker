@@ -8,7 +8,6 @@ Manages quest CRUD, list views, and completion with inline buttons.
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local ButtonDialog = require("ui/widget/buttondialog")
-local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -34,6 +33,7 @@ local Navigation = require("modules/navigation")
 local UIConfig = require("modules/ui_config")
 local UIHelpers = require("modules/ui_helpers")
 local Celebration = require("modules/celebration")
+local QuestRow = require("modules/quest_row")
 
 local Quests = {}
 
@@ -42,24 +42,12 @@ local function getQuestRowHeight()
     return UIConfig:dim("row_height")
 end
 
-local function getButtonWidth()
-    return UIConfig:dim("button_width")
-end
-
 local function getTypeTabHeight()
     return UIConfig:dim("type_tab_height")
 end
 
 local function getTypeTabWidth()
     return UIConfig:dim("type_tab_width")
-end
-
-local function getSmallButtonWidth()
-    return UIConfig:dim("small_button_width")
-end
-
-local function getProgressWidth()
-    return UIConfig:dim("progress_width")
 end
 
 -- Current view state
@@ -288,188 +276,42 @@ function Quests:buildTypeTabs()
 end
 
 --[[--
-Build a single quest row with inline buttons.
-Supports both binary (OK/Skip) and progressive (+/-) quests.
-Uses Button widgets with callbacks for tap handling.
+Build a single quest row using the shared QuestRow component.
 --]]
 function Quests:buildQuestRow(quest, content_width)
-    local today = os.date("%Y-%m-%d")
-    local colors = UIConfig:getColors()
     local quests_module = self
 
-    -- Use date-specific completion check (not legacy quest.completed flag)
-    local is_completed = Data:isQuestCompletedOnDate(quest, today)
-    local status_bg = (is_completed and colors.completed_bg) or colors.background
-    local text_color = (is_completed and colors.muted) or colors.foreground
-
-    -- Check if progressive quest needs daily reset
-    if quest.is_progressive and quest.progress_last_date ~= today then
-        quest.progress_current = 0
-    end
-
-    local row
-    local BUTTON_GAP = UIConfig:dim("button_gap") or 2
-
-    if quest.is_progressive then
-        -- Progressive quest layout: [−] [3/10 pages] [+] [Title]
-        local SMALL_BUTTON_WIDTH = getSmallButtonWidth()
-        local PROGRESS_WIDTH = getProgressWidth()
-        local title_width = content_width - SMALL_BUTTON_WIDTH * 2 - PROGRESS_WIDTH - BUTTON_GAP * 2 - Size.padding.small
-
-        -- Title text
-        local title_widget = TextWidget:new{
-            text = quest.title,
-            face = Font:getFace("cfont", 13),
-            fgcolor = text_color,
-            max_width = title_width - Size.padding.small * 2,
-        }
-
-        -- Minus button with callback
-        local minus_button = Button:new{
-            text = "−",
-            width = SMALL_BUTTON_WIDTH,
-            max_width = SMALL_BUTTON_WIDTH,
-            bordersize = 1,
-            margin = 0,
-            padding = Size.padding.small,
-            text_font_face = "cfont",
-            text_font_size = 16,
-            text_font_bold = true,
-            callback = function()
-                quests_module:decrementQuestProgress(quest)
+    return QuestRow.build(quest, {
+        quest_type = self.current_type,
+        content_width = content_width,
+        show_streak = true,
+        callbacks = {
+            on_complete = function(q)
+                quests_module:toggleQuestComplete(q)
             end,
-        }
-
-        -- Progress display (non-interactive)
-        local current = quest.progress_current or 0
-        local target = quest.progress_target or 1
-        local pct = math.min(1, current / target)
-        local progress_bg = is_completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
-        local progress_text = string.format("%d/%d", current, target)
-        if quest.progress_unit then
-            progress_text = progress_text .. " " .. quest.progress_unit:sub(1, 4)
-        end
-
-        local progress_display = FrameContainer:new{
-            width = PROGRESS_WIDTH,
-            height = getQuestRowHeight() - 4,
-            padding = 2,
-            bordersize = 1,
-            background = progress_bg,
-            CenterContainer:new{
-                dimen = Geom:new{w = PROGRESS_WIDTH - 6, h = getQuestRowHeight() - 10},
-                TextWidget:new{
-                    text = progress_text,
-                    face = Font:getFace("cfont", 11),
-                    bold = is_completed,
-                },
-            },
-        }
-
-        -- Plus button with callback
-        local plus_button = Button:new{
-            text = "+",
-            width = SMALL_BUTTON_WIDTH,
-            max_width = SMALL_BUTTON_WIDTH,
-            bordersize = 1,
-            margin = 0,
-            padding = Size.padding.small,
-            text_font_face = "cfont",
-            text_font_size = 16,
-            text_font_bold = true,
-            enabled = not is_completed,
-            callback = function()
-                quests_module:incrementQuestProgress(quest)
+            on_skip = function(q)
+                quests_module:skipQuest(q)
             end,
-        }
-
-        row = HorizontalGroup:new{
-            align = "center",
-            minus_button,
-            HorizontalSpan:new{ width = BUTTON_GAP },
-            progress_display,
-            HorizontalSpan:new{ width = BUTTON_GAP },
-            plus_button,
-            HorizontalSpan:new{ width = Size.padding.small },
-            FrameContainer:new{
-                width = title_width,
-                height = getQuestRowHeight(),
-                padding = Size.padding.small,
-                bordersize = 0,
-                background = status_bg,
-                title_widget,
-            },
-        }
-    else
-        -- Binary quest layout: [Done] [Skip] [Title]
-        local title_width = content_width - getButtonWidth() * 2 - BUTTON_GAP - Size.padding.small
-
-        -- Title text
-        local title_widget = TextWidget:new{
-            text = quest.title,
-            face = Font:getFace("cfont", 14),
-            fgcolor = text_color,
-            max_width = title_width - Size.padding.small * 2,
-        }
-
-        -- Complete button with callback
-        local complete_text = is_completed and "X" or "Done"
-        local complete_button = Button:new{
-            text = complete_text,
-            width = getButtonWidth(),
-            max_width = getButtonWidth(),
-            bordersize = 1,
-            margin = 0,
-            padding = Size.padding.small,
-            text_font_face = "cfont",
-            text_font_size = 12,
-            text_font_bold = true,
-            callback = function()
-                quests_module:toggleQuestComplete(quest)
+            on_plus = function(q)
+                quests_module:incrementQuestProgress(q)
             end,
-        }
-
-        -- Skip button with callback
-        local skip_button = Button:new{
-            text = "Skip",
-            width = getButtonWidth(),
-            max_width = getButtonWidth(),
-            bordersize = 1,
-            margin = 0,
-            padding = Size.padding.small,
-            text_font_face = "cfont",
-            text_font_size = 10,
-            text_font_bold = false,
-            callback = function()
-                quests_module:skipQuest(quest)
+            on_minus = function(q)
+                quests_module:decrementQuestProgress(q)
             end,
-        }
-
-        row = HorizontalGroup:new{
-            align = "center",
-            complete_button,
-            HorizontalSpan:new{ width = BUTTON_GAP },
-            skip_button,
-            HorizontalSpan:new{ width = Size.padding.small },
-            FrameContainer:new{
-                width = title_width,
-                height = getQuestRowHeight(),
-                padding = Size.padding.small,
-                bordersize = 0,
-                background = status_bg,
-                title_widget,
-            },
-        }
-    end
-
-    return FrameContainer:new{
-        width = content_width,
-        height = getQuestRowHeight(),
-        padding = 0,
-        bordersize = 1,
-        background = status_bg,
-        row,
-    }
+            on_edit = function(q)
+                quests_module:showEditQuestDialog(q)
+            end,
+            on_delete = function(q)
+                quests_module:confirmDeleteQuest(q)
+            end,
+            on_refresh = function()
+                if quests_module.quests_widget then
+                    UIManager:close(quests_module.quests_widget)
+                end
+                quests_module:showQuestsView()
+            end,
+        },
+    })
 end
 
 --[[--
@@ -488,106 +330,6 @@ function Quests:switchType(type_id)
     end
 end
 
-
---[[--
-Show actions for a quest (edit, delete, view details).
---]]
-function Quests:showQuestActions(quest)
-    local dialog
-    dialog = ButtonDialog:new{
-        title = quest.title,
-        buttons = {
-            {{
-                text = _("View Details"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:showQuestDetails(quest)
-                end,
-            }},
-            {{
-                text = _("Edit"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:showEditQuestDialog(quest)
-                end,
-            }},
-            {{
-                text = _("Delete"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:confirmDeleteQuest(quest)
-                end,
-            }},
-            {{
-                text = _("Cancel"),
-                callback = function()
-                    UIManager:close(dialog)
-                end,
-            }},
-        },
-    }
-    UIManager:show(dialog)
-end
-
---[[--
-Show quest details with 30-day heatmap.
---]]
-function Quests:showQuestDetails(quest)
-    -- Build 30-day completion heatmap
-    local heatmap = self:buildQuestHeatmap(quest)
-
-    local energy_text = quest.energy_required or "Any"
-    if type(energy_text) == "table" then
-        energy_text = table.concat(energy_text, ", ")
-    end
-
-    local time_slot = quest.time_slot or "Any time"
-    local quest_type = self.current_type:sub(1,1):upper() .. self.current_type:sub(2)
-
-    local details = string.format(
-        "%s\n\nTime: %s\nEnergy: %s\nType: %s\n\n30-Day Activity:\n%s",
-        quest.title,
-        time_slot,
-        energy_text,
-        quest_type,
-        heatmap
-    )
-
-    UIManager:show(InfoMessage:new{
-        text = details,
-        width = Screen:getWidth() * 0.85,
-    })
-end
-
---[[--
-Build a 30-day heatmap for a specific quest.
---]]
-function Quests:buildQuestHeatmap(quest)
-    local today = os.time()
-    local lines = {}
-
-    -- Build 30 days in 6 rows of 5
-    for week = 0, 5 do
-        local row = ""
-        for day = 0, 4 do
-            local day_offset = week * 5 + day
-            if day_offset >= 30 then break end
-
-            local date_time = today - (29 - day_offset) * 86400
-            local date_str = os.date("%Y-%m-%d", date_time)
-
-            -- Check if this quest was completed on this day using compact date format
-            local completed = Data:isQuestCompletedOnDate(quest, date_str)
-
-            row = row .. (completed and "#" or ".")
-        end
-        if row ~= "" then
-            table.insert(lines, row)
-        end
-    end
-
-    return table.concat(lines, "\n")
-end
 
 --[[--
 Toggle quest completion status.
