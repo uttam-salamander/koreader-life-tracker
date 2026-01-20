@@ -32,8 +32,28 @@ local Celebration = require("modules/celebration")
 
 local QuestRow = {}
 
+-- Debounce tracking to prevent race conditions from rapid taps
+local _last_action_time = 0
+local DEBOUNCE_MS = 300  -- Minimum ms between actions
+
 local function log(...)
     logger.info("QuestRow:", ...)
+end
+
+--[[--
+Check if enough time has passed since last action (debounce).
+Uses wall clock time (os.time) instead of CPU time (os.clock) since
+CPU time stops during device suspend on e-ink devices.
+@return boolean True if action should proceed, false if debounced
+--]]
+local function checkDebounce()
+    local now = os.time() * 1000  -- Wall clock time in milliseconds
+    if now - _last_action_time < DEBOUNCE_MS then
+        log("Action debounced - too fast")
+        return false
+    end
+    _last_action_time = now
+    return true
 end
 
 --[[--
@@ -44,6 +64,9 @@ Toggle quest completion and refresh the view.
 @param on_refresh function Callback to refresh the view
 --]]
 function QuestRow.handleComplete(quest, quest_type, date, on_refresh)
+    -- Debounce to prevent race condition from rapid taps
+    if not checkDebounce() then return end
+
     -- Validate quest parameter
     if not quest or not quest.id then
         log("handleComplete called with invalid quest")
@@ -147,6 +170,9 @@ Increment progress for a progressive quest.
 @param on_refresh function Callback to refresh the view
 --]]
 function QuestRow.handlePlus(quest, quest_type, on_refresh)
+    -- Debounce to prevent race condition from rapid taps
+    if not checkDebounce() then return end
+
     if not quest or not quest.id then
         log("handlePlus called with invalid quest")
         return
@@ -174,6 +200,9 @@ Decrement progress for a progressive quest.
 @param on_refresh function Callback to refresh the view
 --]]
 function QuestRow.handleMinus(quest, quest_type, on_refresh)
+    -- Debounce to prevent race condition from rapid taps
+    if not checkDebounce() then return end
+
     if not quest or not quest.id then
         log("handleMinus called with invalid quest")
         return
@@ -498,8 +527,10 @@ function QuestRow.build(quest, options)
             end,
         }
 
-        -- Progress display (guard against division by zero)
+        -- Progress display (guard against division by zero and inf/NaN)
         local pct = target > 0 and math.min(1, current / target) or 0
+        -- Explicit guard against inf/NaN from floating point edge cases
+        if pct ~= pct or pct == math.huge or pct == -math.huge then pct = 0 end
         local progress_bg = is_completed and Blitbuffer.gray(0.7) or Blitbuffer.gray(1 - pct * 0.5)
         local progress_text = string.format("%d/%d", current, target)
 

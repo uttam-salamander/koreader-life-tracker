@@ -464,18 +464,27 @@ function Quests:updateGlobalStreak()
     local user_settings = Data:loadUserSettings()
     local today = Data:getCurrentDate()
 
+    -- Guard against nil/corrupted streak_data
+    if not user_settings.streak_data then
+        user_settings.streak_data = {
+            current = 0,
+            longest = 0,
+            last_completed_date = nil,
+        }
+    end
+
     if user_settings.streak_data.last_completed_date == today then
         return
     end
 
     local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
     if user_settings.streak_data.last_completed_date == yesterday then
-        user_settings.streak_data.current = user_settings.streak_data.current + 1
+        user_settings.streak_data.current = (user_settings.streak_data.current or 0) + 1
     else
         user_settings.streak_data.current = 1
     end
 
-    if user_settings.streak_data.current > user_settings.streak_data.longest then
+    if (user_settings.streak_data.current or 0) > (user_settings.streak_data.longest or 0) then
         user_settings.streak_data.longest = user_settings.streak_data.current
     end
 

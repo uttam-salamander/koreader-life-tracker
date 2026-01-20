@@ -28,6 +28,23 @@ local UIManager = require("ui/uimanager")
 
 local UIHelpers = {}
 
+-- Gesture debounce tracking to prevent rapid tap issues
+local _last_gesture_time = 0
+local GESTURE_DEBOUNCE_MS = 300  -- Minimum ms between gesture actions
+
+--[[--
+Check if enough time has passed since last gesture (debounce).
+@return boolean True if gesture should proceed, false if debounced
+--]]
+local function checkGestureDebounce()
+    local now = os.clock() * 1000  -- Convert to milliseconds
+    if now - _last_gesture_time < GESTURE_DEBOUNCE_MS then
+        return false
+    end
+    _last_gesture_time = now
+    return true
+end
+
 -- ============================================================================
 -- Widget Lifecycle Helpers
 -- ============================================================================
@@ -43,6 +60,13 @@ leaves stale references that prevent garbage collection.
 function UIHelpers.closeWidget(module, widget_key)
     local widget = module[widget_key]
     if widget then
+        -- Call widget cleanup methods to free resources (BlitBuffers, timers, etc.)
+        if widget.free then
+            pcall(function() widget:free() end)
+        end
+        if widget.onCloseWidget then
+            pcall(function() widget:onCloseWidget() end)
+        end
         UIManager:close(widget)
         module[widget_key] = nil
     end
@@ -51,43 +75,6 @@ end
 -- ============================================================================
 -- Gesture Helpers
 -- ============================================================================
-
---[[--
-Dispatch a corner gesture to the user's configured action.
-KOReader stores gesture settings in the gestures module.
-This is called by corner tap handlers to execute user-configured actions.
-
-@param ui The KOReader UI reference (module.ui)
-@param gesture_name string The gesture name (e.g., "tap_top_left_corner")
-@return bool True if gesture was handled
---]]
-function UIHelpers.dispatchCornerGesture(ui, gesture_name)
-    -- Try to access KOReader's gesture module for user settings
-    if ui and ui.gestures then
-        local gesture_manager = ui.gestures
-        -- Check if user has a gesture configured
-        local settings = gesture_manager.gestures or {}
-        local action = settings[gesture_name]
-        if action then
-            -- Dispatch the action
-            local Dispatcher = require("dispatcher")
-            Dispatcher:execute(action)
-            return true
-        end
-    end
-
-    -- Fallback: try common corner actions directly via event
-    if gesture_name == "tap_top_right_corner" then
-        ui:handleEvent(Event:new("ToggleFrontlight"))
-        return true
-    elseif gesture_name == "tap_top_left_corner" then
-        ui:handleEvent(Event:new("ToggleBookmark"))
-        return true
-    end
-
-    -- No action configured, let gesture pass through
-    return false
-end
 
 --[[--
 Setup corner gesture handlers on a widget.
@@ -120,6 +107,8 @@ function UIHelpers.setupCornerGestures(widget, module_self, dims)
         },
     }
     widget.onTopCenterTap = function()
+        -- Debounce rapid taps to prevent UI state corruption
+        if not checkGestureDebounce() then return true end
         -- Show KOReader's reader menu by sending event
         if module_self.ui and module_self.ui.menu then
             module_self.ui.menu:onShowMenu()
@@ -130,7 +119,7 @@ function UIHelpers.setupCornerGestures(widget, module_self, dims)
         return true
     end
 
-    -- Top-left corner tap handler - Dispatch to user's corner action
+    -- Top-left corner tap handler - Toggle frontlight (same pattern as TopCenterTap)
     widget.ges_events.TopLeftCornerTap = {
         GestureRange:new{
             ges = "tap",
@@ -143,10 +132,14 @@ function UIHelpers.setupCornerGestures(widget, module_self, dims)
         },
     }
     widget.onTopLeftCornerTap = function()
-        return UIHelpers.dispatchCornerGesture(module_self.ui, "tap_top_left_corner")
+        if not checkGestureDebounce() then return true end
+        if module_self.ui then
+            module_self.ui:handleEvent(Event:new("ToggleFrontlight"))
+        end
+        return true
     end
 
-    -- Top-right corner tap handler - Dispatch to user's corner action
+    -- Top-right corner tap handler - Toggle night mode
     widget.ges_events.TopRightCornerTap = {
         GestureRange:new{
             ges = "tap",
@@ -159,10 +152,14 @@ function UIHelpers.setupCornerGestures(widget, module_self, dims)
         },
     }
     widget.onTopRightCornerTap = function()
-        return UIHelpers.dispatchCornerGesture(module_self.ui, "tap_top_right_corner")
+        if not checkGestureDebounce() then return true end
+        if module_self.ui then
+            module_self.ui:handleEvent(Event:new("ToggleNightMode"))
+        end
+        return true
     end
 
-    -- Bottom-left corner tap handler
+    -- Bottom-left corner tap handler - Back/close
     widget.ges_events.BottomLeftCornerTap = {
         GestureRange:new{
             ges = "tap",
@@ -175,10 +172,14 @@ function UIHelpers.setupCornerGestures(widget, module_self, dims)
         },
     }
     widget.onBottomLeftCornerTap = function()
-        return UIHelpers.dispatchCornerGesture(module_self.ui, "tap_bottom_left_corner")
+        if not checkGestureDebounce() then return true end
+        if module_self.ui then
+            module_self.ui:handleEvent(Event:new("Back"))
+        end
+        return true
     end
 
-    -- Bottom-right corner tap handler
+    -- Bottom-right corner tap handler - Toggle bookmark
     widget.ges_events.BottomRightCornerTap = {
         GestureRange:new{
             ges = "tap",
@@ -191,7 +192,11 @@ function UIHelpers.setupCornerGestures(widget, module_self, dims)
         },
     }
     widget.onBottomRightCornerTap = function()
-        return UIHelpers.dispatchCornerGesture(module_self.ui, "tap_bottom_right_corner")
+        if not checkGestureDebounce() then return true end
+        if module_self.ui then
+            module_self.ui:handleEvent(Event:new("ToggleBookmark"))
+        end
+        return true
     end
 end
 

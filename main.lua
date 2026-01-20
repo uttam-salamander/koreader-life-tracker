@@ -307,35 +307,31 @@ Called when plugin is disabled or KOReader exits.
 Clean up database connections to prevent memory/resource leaks.
 --]]
 function LifeTracker:onCloseWidget()
+    -- Helper to properly close and free a widget
+    local function closeAndFree(module, widget_key)
+        if not module then return end
+        local widget = module[widget_key]
+        if widget then
+            -- Call widget cleanup methods to free resources
+            if widget.free then
+                pcall(function() widget:free() end)
+            end
+            if widget.onCloseWidget then
+                pcall(function() widget:onCloseWidget() end)
+            end
+            UIManager:close(widget)
+            module[widget_key] = nil
+        end
+    end
+
     -- Close any open module widgets to prevent memory leaks
-    if Dashboard and Dashboard.dashboard_widget then
-        UIManager:close(Dashboard.dashboard_widget)
-        Dashboard.dashboard_widget = nil
-    end
-    if Quests and Quests.quests_widget then
-        UIManager:close(Quests.quests_widget)
-        Quests.quests_widget = nil
-    end
-    if Timeline and Timeline.timeline_widget then
-        UIManager:close(Timeline.timeline_widget)
-        Timeline.timeline_widget = nil
-    end
-    if Journal and Journal.journal_widget then
-        UIManager:close(Journal.journal_widget)
-        Journal.journal_widget = nil
-    end
-    if Reminders and Reminders.reminders_widget then
-        UIManager:close(Reminders.reminders_widget)
-        Reminders.reminders_widget = nil
-    end
-    if Settings and Settings.settings_widget then
-        UIManager:close(Settings.settings_widget)
-        Settings.settings_widget = nil
-    end
-    if Read and Read.read_widget then
-        UIManager:close(Read.read_widget)
-        Read.read_widget = nil
-    end
+    closeAndFree(Dashboard, "dashboard_widget")
+    closeAndFree(Quests, "quests_widget")
+    closeAndFree(Timeline, "timeline_widget")
+    closeAndFree(Journal, "journal_widget")
+    closeAndFree(Reminders, "reminders_widget")
+    closeAndFree(Settings, "settings_widget")
+    closeAndFree(Read, "read_widget")
 
     -- Close reading stats database connection
     if ReadingStats then

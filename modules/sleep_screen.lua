@@ -32,8 +32,11 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local Screen = Device.screen
 local _ = require("gettext")
 
+local HorizontalSpan = require("ui/widget/horizontalspan")
+
 local Data = require("modules/data")
 local UIConfig = require("modules/ui_config")
+local ReadingStats = require("modules/reading_stats")
 
 local SleepScreen = {}
 
@@ -167,6 +170,128 @@ function SleepScreen:buildCompactHeatmap(_width)
 end
 
 --[[--
+Build compact reading stats for sleep screen (Today + Week).
+@param content_width number Width of content area
+@treturn Widget|nil Reading stats widget or nil
+--]]
+function SleepScreen:buildReadingStats(content_width)
+    local today_db = ReadingStats:getTodayStatsFromDB()
+    local week_db = ReadingStats:getWeekStatsFromDB()
+
+    local today_pages = today_db.pages or 0
+    local today_time = ReadingStats:formatTime(today_db.time or 0)
+    local week_pages = week_db.pages or 0
+    local week_time = ReadingStats:formatTime(week_db.time or 0)
+
+    -- Skip if no reading data
+    if today_pages == 0 and week_pages == 0 then
+        return nil
+    end
+
+    local stats_group = VerticalGroup:new{align = "center"}
+
+    table.insert(stats_group, TextWidget:new{
+        text = _("Reading"),
+        face = UIConfig:getFont("tfont", 16),
+        fgcolor = Blitbuffer.gray(0.3),
+    })
+    table.insert(stats_group, VerticalSpan:new{width = Size.padding.small})
+
+    -- Two-column layout: Today | This Week
+    local half_width = math.floor(content_width / 2) - Size.padding.small
+
+    local today_col = VerticalGroup:new{align = "center"}
+    table.insert(today_col, TextWidget:new{
+        text = _("Today"),
+        face = UIConfig:getFont("cfont", 12),
+        fgcolor = Blitbuffer.gray(0.5),
+    })
+    table.insert(today_col, TextWidget:new{
+        text = string.format("%d pg", today_pages),
+        face = UIConfig:getFont("tfont", 14),
+        fgcolor = Blitbuffer.COLOR_BLACK,
+    })
+    table.insert(today_col, TextWidget:new{
+        text = today_time,
+        face = UIConfig:getFont("cfont", 11),
+        fgcolor = Blitbuffer.gray(0.5),
+    })
+
+    local week_col = VerticalGroup:new{align = "center"}
+    table.insert(week_col, TextWidget:new{
+        text = _("This Week"),
+        face = UIConfig:getFont("cfont", 12),
+        fgcolor = Blitbuffer.gray(0.5),
+    })
+    table.insert(week_col, TextWidget:new{
+        text = string.format("%d pg", week_pages),
+        face = UIConfig:getFont("tfont", 14),
+        fgcolor = Blitbuffer.COLOR_BLACK,
+    })
+    table.insert(week_col, TextWidget:new{
+        text = week_time,
+        face = UIConfig:getFont("cfont", 11),
+        fgcolor = Blitbuffer.gray(0.5),
+    })
+
+    local row = HorizontalGroup:new{align = "center"}
+    table.insert(row, CenterContainer:new{
+        dimen = Geom:new{w = half_width, h = Screen:scaleBySize(50)},
+        today_col,
+    })
+    table.insert(row, HorizontalSpan:new{width = Size.padding.default})
+    table.insert(row, CenterContainer:new{
+        dimen = Geom:new{w = half_width, h = Screen:scaleBySize(50)},
+        week_col,
+    })
+
+    table.insert(stats_group, row)
+    return stats_group
+end
+
+--[[--
+Filter quests by energy level (same logic as dashboard).
+@param quests table Array of quest objects
+@param energy_level string Current energy level
+@param today string Today's date string
+@treturn table Filtered quests array
+--]]
+function SleepScreen:filterQuestsByEnergy(quests, energy_level, today)
+    local filtered = {}
+    local categories = {"Energetic", "Average", "Down"}
+
+    -- Build energy level index (lower index = higher energy)
+    local energy_index = {}
+    for i, cat in ipairs(categories) do
+        energy_index[cat] = i
+    end
+
+    local current_level = energy_index[energy_level] or 2  -- Default to middle
+    local is_high_energy = (current_level == 1)
+
+    for _, quest in ipairs(quests) do
+        -- Skip quests that were skipped TODAY
+        if quest.skipped_date == today then
+            goto continue
+        end
+
+        local required_level = energy_index[quest.energy_required] or 0  -- 0 for "Any"
+
+        -- Show if:
+        -- 1. energy_required == "Any" or not set
+        -- 2. High energy day (show everything)
+        -- 3. Quest energy <= current energy
+        if required_level == 0 or is_high_energy or required_level >= current_level then
+            table.insert(filtered, quest)
+        end
+
+        ::continue::
+    end
+
+    return filtered
+end
+
+--[[--
 Build the static sleep screen content.
 @treturn Widget The sleep screen content widget
 --]]
@@ -235,66 +360,92 @@ function SleepScreen:buildContent()
 
     table.insert(content, VerticalSpan:new{ width = Size.padding.large })
 
-    -- ===== Quests List (filtered by current time of day) =====
+    -- ===== Reading Stats (Today + Week) =====
+    local reading_stats = self:buildReadingStats(content_width)
+    if reading_stats then
+        table.insert(content, reading_stats)
+        table.insert(content, VerticalSpan:new{ width = Size.padding.large })
+    end
+
+    -- ===== Daily Quests Summary (OPTIMIZED: limit to 3 incomplete) =====
+    -- Sleep screen runs on every suspend - minimize compute cost
     local all_quests = Data:loadAllQuests()
     if all_quests and all_quests.daily and #all_quests.daily > 0 then
-        -- Determine current time slot
-        local hour = tonumber(os.date("%H"))
-        local current_time_slot
-        if hour >= 5 and hour < 12 then
-            current_time_slot = "Morning"
-        elseif hour >= 12 and hour < 17 then
-            current_time_slot = "Afternoon"
-        elseif hour >= 17 and hour < 21 then
-            current_time_slot = "Evening"
-        else
-            current_time_slot = "Night"
-        end
+        local today = os.date("%Y-%m-%d")
+        -- today_energy already defined above
 
-        -- Filter quests for current time slot
-        local time_slot_quests = {}
+        -- Pre-compute energy context once (supports custom categories)
+        local energy_categories = user_settings.energy_categories or {"Energetic", "Average", "Down"}
+        local energy_index = {}
+        for i, cat in ipairs(energy_categories) do
+            energy_index[cat] = i
+        end
+        local current_level = energy_index[today_energy] or 2  -- Default to middle
+        local is_high_energy = (current_level == 1)
+
+        -- OPTIMIZED: Single pass to count and collect incomplete quests
+        local incomplete_quests = {}
+        local completed_count = 0
+        local total_count = 0
+
         for _, quest in ipairs(all_quests.daily) do
-            if quest.time_slot == current_time_slot or not quest.time_slot then
-                table.insert(time_slot_quests, quest)
+            -- Skip quests that were skipped today
+            if quest.skipped_date ~= today then
+                -- Energy filter using index (handles custom categories)
+                local required_level = energy_index[quest.energy_required] or 0  -- 0 for "Any"
+                local passes = quest.energy_required == "Any" or
+                               not quest.energy_required or
+                               is_high_energy or
+                               required_level >= current_level
+
+                if passes then
+                    total_count = total_count + 1
+                    if Data:isQuestCompletedOnDate(quest, today) then
+                        completed_count = completed_count + 1
+                    else
+                        -- Only collect up to 3 incomplete quests for display
+                        if #incomplete_quests < 3 then
+                            table.insert(incomplete_quests, quest)
+                        end
+                    end
+                end
             end
         end
 
-        if #time_slot_quests > 0 then
+        if total_count > 0 then
             table.insert(content, TextWidget:new{
-                text = current_time_slot .. " Quests",
+                text = string.format(_("Today's Quests (%d/%d)"), completed_count, total_count),
                 face = UIConfig:getFont("tfont", 16),
                 fgcolor = Blitbuffer.gray(0.3),
             })
             table.insert(content, VerticalSpan:new{ width = Size.padding.small })
 
-            -- Show up to 5 quests to keep it compact
-            local today = os.date("%Y-%m-%d")
-            local quest_count = 0
-            for _, quest in ipairs(time_slot_quests) do
-                if quest_count >= 5 then break end
-
-                local is_completed = Data:isQuestCompletedOnDate(quest, today)
-                local status_icon = is_completed and "[Done]" or "[    ]"
-                local quest_text = status_icon .. " " .. (quest.title or "Untitled")
-
-                -- Truncate long titles
-                if #quest_text > 30 then
-                    quest_text = quest_text:sub(1, 27) .. "..."
+            -- Show up to 3 incomplete quests only (battery optimization)
+            for _, quest in ipairs(incomplete_quests) do
+                local quest_text = "[ ] " .. (quest.title or "Untitled")
+                if #quest_text > 35 then
+                    quest_text = quest_text:sub(1, 32) .. "..."
                 end
-
                 table.insert(content, TextWidget:new{
                     text = quest_text,
-                    face = UIConfig:getFont("cfont", 16),  -- Increased font size
-                    fgcolor = is_completed and Blitbuffer.gray(0.5) or Blitbuffer.COLOR_BLACK,
+                    face = UIConfig:getFont("cfont", 15),
+                    fgcolor = Blitbuffer.COLOR_BLACK,
                 })
-                quest_count = quest_count + 1
             end
 
-            if #time_slot_quests > 5 then
+            -- Show remaining count if more than 3 incomplete
+            local remaining = total_count - completed_count - #incomplete_quests
+            if remaining > 0 then
                 table.insert(content, TextWidget:new{
-                    text = string.format(_("... and %d more"), #time_slot_quests - 5),
+                    text = string.format(_("... +%d more"), remaining),
                     face = UIConfig:getFont("cfont", 13),
                     fgcolor = Blitbuffer.gray(0.5),
+                })
+            elseif completed_count == total_count then
+                table.insert(content, TextWidget:new{
+                    text = _("✓ All done!"),
+                    face = UIConfig:getFont("cfont", 15),
+                    fgcolor = Blitbuffer.gray(0.4),
                 })
             end
         end

@@ -174,6 +174,7 @@ function Celebration:createAnimatedWidget(filepath, width, height, frame_delay)
             frame_delay = frame_delay or 0.1,
             loop = true,
             max_loops = 0,  -- Infinite until dismissed
+            image_disposable = true,  -- Ensure frame buffers are freed
         }
     end)
 
@@ -199,6 +200,10 @@ function Celebration:showCompletion(message)
 
     message = message or _("Quest completed!")
     local timeout = settings.timeout or 3.0
+
+    -- SAFETY: Close any existing celebration before creating new one
+    -- Prevents memory leaks from orphaned animation widgets
+    self:closeCelebration()
 
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
@@ -295,20 +300,29 @@ function Celebration:showCompletion(message)
         animated_widget:play()
     end
 
-    -- Auto-dismiss after timeout
-    UIManager:scheduleIn(timeout, function()
+    -- Auto-dismiss after timeout (store reference for cleanup)
+    self._auto_dismiss_action = function()
         celebration:closeCelebration()
-    end)
+    end
+    UIManager:scheduleIn(timeout, self._auto_dismiss_action)
 end
 
 --[[--
 Close the celebration dialog and clean up resources.
+Properly cleans up animation, dialog, and scheduled timers to prevent memory leaks.
 --]]
 function Celebration:closeCelebration()
-    -- Stop and free animated widget
+    -- Unschedule auto-dismiss timer to prevent orphaned callbacks
+    if self._auto_dismiss_action then
+        UIManager:unschedule(self._auto_dismiss_action)
+        self._auto_dismiss_action = nil
+    end
+
+    -- Stop and free animated widget with pcall protection
+    -- Ensures free() is called even if stop() throws
     if self._animated_widget then
-        self._animated_widget:stop()
-        self._animated_widget:free()
+        pcall(function() self._animated_widget:stop() end)
+        pcall(function() self._animated_widget:free() end)
         self._animated_widget = nil
     end
 

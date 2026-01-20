@@ -15,7 +15,7 @@ local Data = {}
 -- Logs will appear in KOReader's crash.log or via SSH
 -- Location: koreader/crash.log on device
 -- ============================================
-Data.DEBUG = true  -- <<< SET TO true TO ENABLE LOGGING <<<
+Data.DEBUG = false  -- <<< SET TO true TO ENABLE LOGGING <<<
 
 function Data:log(message, ...)
     if not self.DEBUG then return end
@@ -418,14 +418,22 @@ function Data:addDateToCompletions(completions, date)
         completions[year_month] = {}
     end
 
-    -- Check if already exists
-    for _, d in ipairs(completions[year_month]) do
-        if d == day then return false end
+    -- Check if already exists using binary search (array is sorted)
+    local days = completions[year_month]
+    local low, high = 1, #days
+    while low <= high do
+        local mid = math.floor((low + high) / 2)
+        if days[mid] == day then
+            return false  -- Already exists
+        elseif days[mid] < day then
+            low = mid + 1
+        else
+            high = mid - 1
+        end
     end
 
-    -- Add and keep sorted for efficient lookup
-    table.insert(completions[year_month], day)
-    table.sort(completions[year_month])
+    -- Binary insert at correct position (maintains sorted order, O(n) vs O(n log n))
+    table.insert(completions[year_month], low, day)
     return true
 end
 
@@ -1061,10 +1069,33 @@ function Data:getDayOfWeek()
 end
 
 function Data:flushAll()
-    if settings_cache then settings_cache:flush() end
-    if quests_cache then quests_cache:flush() end
-    if logs_cache then logs_cache:flush() end
-    if reminders_cache then reminders_cache:flush() end
+    local logger = require("logger")
+    local errors = {}
+
+    -- Flush each cache with error handling
+    if settings_cache then
+        local ok, err = pcall(function() settings_cache:flush() end)
+        if not ok then table.insert(errors, "settings: " .. tostring(err)) end
+    end
+    if quests_cache then
+        local ok, err = pcall(function() quests_cache:flush() end)
+        if not ok then table.insert(errors, "quests: " .. tostring(err)) end
+    end
+    if logs_cache then
+        local ok, err = pcall(function() logs_cache:flush() end)
+        if not ok then table.insert(errors, "logs: " .. tostring(err)) end
+    end
+    if reminders_cache then
+        local ok, err = pcall(function() reminders_cache:flush() end)
+        if not ok then table.insert(errors, "reminders: " .. tostring(err)) end
+    end
+
+    -- Log errors if any occurred
+    if #errors > 0 then
+        logger.err("LifeTracker: flushAll failed:", table.concat(errors, ", "))
+        return false, errors
+    end
+    return true
 end
 
 -- ============================================

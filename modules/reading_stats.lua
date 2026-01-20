@@ -273,6 +273,71 @@ function ReadingStats:getWeekStatsFromDB()
 end
 
 --[[--
+Get all dashboard reading stats in batched queries.
+Combines total stats + today + week into minimal DB calls.
+OPTIMIZATION: Reduces 3 separate queries to 2 queries.
+@return table with total, today, and week stats
+--]]
+function ReadingStats:getDashboardStats()
+    local result = {
+        total = { total_books = 0, total_pages = 0, total_time = 0 },
+        today = { pages = 0, time = 0 },
+        week = { pages = 0, time = 0 },
+    }
+
+    local db = self:getStatsDB()
+    if not db then
+        return result
+    end
+
+    -- Query 1: Total stats from book table
+    local ok1, total_result = pcall(function()
+        local sql = [[
+            SELECT
+                COUNT(*) as total_books,
+                COALESCE(SUM(total_read_pages), 0) as total_pages,
+                COALESCE(SUM(total_read_time), 0) as total_time
+            FROM book
+            WHERE total_read_time > 0
+        ]]
+        return db:exec(sql)
+    end)
+
+    if ok1 and total_result then
+        result.total.total_books = tonumber(total_result.total_books and total_result.total_books[1]) or 0
+        result.total.total_pages = tonumber(total_result.total_pages and total_result.total_pages[1]) or 0
+        result.total.total_time = tonumber(total_result.total_time and total_result.total_time[1]) or 0
+    end
+
+    -- Query 2: Combined today + week stats from page_stat_data (single query)
+    local today_start = sanitizeSqlInt(Data:getTodayStartTime(), 0, MAX_TIMESTAMP)
+    local week_start = sanitizeSqlInt(Data:getDaysAgoStartTime(7), 0, MAX_TIMESTAMP)
+
+    local ok2, period_result = pcall(function()
+        -- Use CASE expressions to get both periods in one query
+        local sql = string.format([[
+            SELECT
+                COUNT(DISTINCT CASE WHEN start_time >= %d THEN page END) as today_pages,
+                COALESCE(SUM(CASE WHEN start_time >= %d THEN duration ELSE 0 END), 0) as today_time,
+                COUNT(DISTINCT page) as week_pages,
+                COALESCE(SUM(duration), 0) as week_time
+            FROM page_stat_data
+            WHERE start_time >= %d
+        ]], today_start, today_start, week_start)
+        return db:exec(sql)
+    end)
+
+    if ok2 and period_result then
+        result.today.pages = tonumber(period_result.today_pages and period_result.today_pages[1]) or 0
+        result.today.time = tonumber(period_result.today_time and period_result.today_time[1]) or 0
+        result.week.pages = tonumber(period_result.week_pages and period_result.week_pages[1]) or 0
+        result.week.time = tonumber(period_result.week_time and period_result.week_time[1]) or 0
+    end
+
+    return result
+end
+
+--[[--
 Get today's reading statistics from KOReader.
 @param ui The KOReader UI instance
 @return table with pages, time, current_book, sessions

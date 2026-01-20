@@ -29,8 +29,10 @@ local Screen = Device.screen
 local _ = require("gettext")
 
 local HorizontalSpan = require("ui/widget/horizontalspan")
+local CenterContainer = require("ui/widget/container/centercontainer")
 
 local Data = require("modules/data")
+local ReadingStats = require("modules/reading_stats")
 local Quests = require("modules/quests")
 local Navigation = require("modules/navigation")
 local Reminders = require("modules/reminders")
@@ -109,14 +111,40 @@ function Dashboard:getDailyQuestStats()
     local today_energy = self.user_settings.today_energy
     local today = Data:getCurrentDate()
 
-    -- Filter by energy and count
-    local filtered = self:filterQuestsByEnergy(all_quests.daily, today_energy)
-    for _, quest in ipairs(filtered) do
-        total = total + 1
-        -- Use date-specific completion check (not legacy quest.completed flag)
-        if Data:isQuestCompletedOnDate(quest, today) then
-            completed = completed + 1
+    -- OPTIMIZED: Single pass filter + count (avoids double table scan)
+    local user_settings = self.user_settings
+    local categories = user_settings.energy_categories or {"Energetic", "Average", "Down"}
+
+    -- Build energy level index once
+    local energy_index = {}
+    for i, cat in ipairs(categories) do
+        energy_index[cat] = i
+    end
+    local current_level = energy_index[today_energy] or 2
+    local is_high_energy = (current_level == 1)
+
+    for _, quest in ipairs(all_quests.daily) do
+        -- Skip quests that were skipped TODAY
+        if quest.skipped_date == today then
+            goto continue
         end
+
+        local required_level = energy_index[quest.energy_required] or 0
+
+        -- Check if quest passes energy filter (same logic as filterQuestsByEnergy)
+        local passes_filter = (required_level == 0) or
+                              is_high_energy or
+                              (required_level >= current_level)
+
+        if passes_filter then
+            total = total + 1
+            -- Check completion in same pass
+            if Data:isQuestCompletedOnDate(quest, today) then
+                completed = completed + 1
+            end
+        end
+
+        ::continue::
     end
 
     return { total = total, completed = completed }
@@ -286,11 +314,14 @@ function Dashboard:showDashboardView()
     local today_energy = self.user_settings.today_energy
     local time_slots = self.user_settings.time_slots or {"Morning", "Afternoon", "Evening", "Night"}
 
+    -- OPTIMIZED: Pre-compute energy context once for all quest filtering
+    local energy_ctx = self:getEnergyContext(today_energy)
+
     -- Store quest list start position for tap handling
     self.quest_list_start_y = self.current_y
 
     -- Today's Quests section (with time slot breakdown)
-    local daily_section = self:buildQuestSectionWithTimeSlots("Today's Quests", all_quests.daily or {}, today_energy, "daily", time_slots)
+    local daily_section = self:buildQuestSectionWithTimeSlots("Today's Quests", all_quests.daily or {}, today_energy, "daily", time_slots, energy_ctx)
     if daily_section then
         table.insert(content, daily_section)
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
@@ -298,7 +329,7 @@ function Dashboard:showDashboardView()
     end
 
     -- Weekly Quests section
-    local weekly_section = self:buildQuestSection("This Week", all_quests.weekly or {}, today_energy, "weekly")
+    local weekly_section = self:buildQuestSection("This Week", all_quests.weekly or {}, today_energy, "weekly", energy_ctx)
     if weekly_section then
         table.insert(content, weekly_section)
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
@@ -306,7 +337,7 @@ function Dashboard:showDashboardView()
     end
 
     -- Monthly Quests section
-    local monthly_section = self:buildQuestSection("This Month", all_quests.monthly or {}, today_energy, "monthly")
+    local monthly_section = self:buildQuestSection("This Month", all_quests.monthly or {}, today_energy, "monthly", energy_ctx)
     if monthly_section then
         table.insert(content, monthly_section)
         table.insert(content, VerticalSpan:new{ width = Size.padding.default })
@@ -370,31 +401,31 @@ function Dashboard:showDashboardView()
     end
     table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("lg") })
 
-    -- ===== Reading Stats =====
-    local reading_stats = self:getReadingStats()
-    if reading_stats then
-        -- Section separator
-        table.insert(content, LineWidget:new{
-            dimen = Geom:new{ w = content_width, h = 1 },
-            background = UIConfig:color("muted"),
-        })
-        table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
-        table.insert(content, TextWidget:new{
-            text = _("Today's Reading"),
-            face = UIConfig:getFont("tfont", UIConfig:fontSize("section_header")),
-            fgcolor = UIConfig:color("foreground"),
-        })
-        table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("xs") })
-        local stats_text = string.format(_("Pages: %d | Time: %s"),
-            reading_stats.pages or 0,
-            Utils.formatReadingTime(reading_stats.time or 0)
-        )
-        table.insert(content, TextWidget:new{
-            text = stats_text,
-            face = UIConfig:getFont("cfont", UIConfig:fontSize("body")),
-            fgcolor = UIConfig:color("foreground"),
-        })
-    end
+    -- ===== Reading Stats Section =====
+    -- Section separator
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{ w = content_width, h = 1 },
+        background = UIConfig:color("muted"),
+    })
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("md") })
+    table.insert(content, TextWidget:new{
+        text = _("Reading"),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("section_title")),
+        fgcolor = UIConfig:color("foreground"),
+    })
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("sm") })
+
+    -- OPTIMIZED: Fetch all reading stats in batched queries (2 queries instead of 4)
+    local dashboard_stats = ReadingStats:getDashboardStats()
+
+    -- All-time reading stats (Books | Pages | Time)
+    local all_time_stats = self:buildAllTimeReadingStats(content_width, dashboard_stats.total)
+    table.insert(content, all_time_stats)
+    table.insert(content, VerticalSpan:new{ width = UIConfig:spacing("sm") })
+
+    -- Today/Week comparison stats
+    local period_stats = self:buildPeriodReadingStats(content_width, dashboard_stats.today, dashboard_stats.week)
+    table.insert(content, period_stats)
 
     -- ===== Wrap content in scrollable container =====
     local scroll_width = UIConfig:getScrollWidth()
@@ -525,14 +556,15 @@ end
 --[[--
 Build a quest section with header and quest items grouped by time slots.
 Tracks Y positions for gesture handling.
+@param energy_ctx table Pre-computed energy context (optional)
 --]]
-function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, quest_type, time_slots)
+function Dashboard:buildQuestSectionWithTimeSlots(title, quests, today_energy, quest_type, time_slots, energy_ctx)
     if not quests or #quests == 0 then
         return nil
     end
 
-    -- Filter quests by energy level
-    local filtered = self:filterQuestsByEnergy(quests, today_energy)
+    -- Filter quests by energy level (uses pre-computed context if available)
+    local filtered = self:filterQuestsByEnergy(quests, today_energy, energy_ctx)
     if #filtered == 0 then
         return nil
     end
@@ -601,14 +633,15 @@ end
 --[[--
 Build a quest section with header and quest items (simple, no time slot grouping).
 Tracks Y positions for gesture handling.
+@param energy_ctx table Pre-computed energy context (optional)
 --]]
-function Dashboard:buildQuestSection(title, quests, today_energy, quest_type)
+function Dashboard:buildQuestSection(title, quests, today_energy, quest_type, energy_ctx)
     if not quests or #quests == 0 then
         return nil
     end
 
-    -- Filter quests by energy level
-    local filtered = self:filterQuestsByEnergy(quests, today_energy)
+    -- Filter quests by energy level (uses pre-computed context if available)
+    local filtered = self:filterQuestsByEnergy(quests, today_energy, energy_ctx)
     if #filtered == 0 then
         return nil
     end
@@ -668,8 +701,13 @@ Shows quests that require your current energy level OR LESS.
 High energy days show all quests.
 Filters out quests that were skipped TODAY (they reappear tomorrow).
 --]]
-function Dashboard:filterQuestsByEnergy(quests, energy_level)
-    local filtered = {}
+--[[--
+Pre-compute energy filter context to avoid redundant calculations.
+Call once per dashboard refresh, pass to filterQuestsByEnergy.
+@param energy_level string Current energy level
+@return table Energy filter context
+--]]
+function Dashboard:getEnergyContext(energy_level)
     local user_settings = self.user_settings
     local categories = user_settings.energy_categories or {"Energetic", "Average", "Down"}
     local today = Data:getCurrentDate()
@@ -681,7 +719,35 @@ function Dashboard:filterQuestsByEnergy(quests, energy_level)
     end
 
     local current_level = energy_index[energy_level] or 2  -- Default to middle
-    local is_high_energy = (current_level == 1)
+
+    return {
+        energy_index = energy_index,
+        current_level = current_level,
+        is_high_energy = (current_level == 1),
+        today = today,
+    }
+end
+
+--[[--
+Filter quests by energy level.
+OPTIMIZATION: Pass pre-computed energy_ctx to avoid redundant calculations.
+@param quests table Array of quests
+@param energy_level string Current energy level (unused if energy_ctx provided)
+@param energy_ctx table Pre-computed energy context (optional)
+@return table Filtered quests
+--]]
+function Dashboard:filterQuestsByEnergy(quests, energy_level, energy_ctx)
+    local filtered = {}
+
+    -- Use pre-computed context or compute on-demand (backward compatibility)
+    if not energy_ctx then
+        energy_ctx = self:getEnergyContext(energy_level)
+    end
+
+    local energy_index = energy_ctx.energy_index
+    local current_level = energy_ctx.current_level
+    local is_high_energy = energy_ctx.is_high_energy
+    local today = energy_ctx.today
 
     for _, quest in ipairs(quests) do
         -- Skip quests that were skipped TODAY (they reappear tomorrow)
@@ -1014,9 +1080,10 @@ function Dashboard:buildDynamicHeatmap(content_width)
         end
 
         -- Build rows for this section (7 rows for days of week)
+        -- Use table.concat to avoid O(n²) string allocations
         local lines = {}
         for day = 0, days_per_week - 1 do
-            local row = ""
+            local row_chars = {}  -- Collect characters in table
             -- Iterate weeks from oldest to newest within this section
             for week = end_week, start_week, -1 do
                 local date_time = today - (week * 7 + (6 - day)) * 86400
@@ -1026,10 +1093,11 @@ function Dashboard:buildDynamicHeatmap(content_width)
                 if log and log.quests_completed then
                     count = log.quests_completed
                 end
-                -- Add space after each character for better spacing
-                row = row .. get_heat_char(count) .. " "
+                -- Add character and space to table
+                table.insert(row_chars, get_heat_char(count))
+                table.insert(row_chars, " ")
             end
-            table.insert(lines, row)
+            table.insert(lines, table.concat(row_chars))  -- O(n) concat
         end
 
         local heatmap_text = table.concat(lines, "\n")
@@ -1057,6 +1125,155 @@ function Dashboard:buildDynamicHeatmap(content_width)
     })
 
     return heatmap_group
+end
+
+--[[--
+Build all-time reading stats widget (Books | Pages | Time).
+Matches the Read page layout.
+@param content_width number Width of content area
+@param total_stats table Pre-fetched total stats (optional, will query if not provided)
+@treturn Widget Stats row widget
+--]]
+function Dashboard:buildAllTimeReadingStats(content_width, total_stats)
+    -- Use pre-fetched stats or query (for backward compatibility)
+    total_stats = total_stats or ReadingStats:getTotalReadingStats()
+
+    local total_books = total_stats.total_books or 0
+    local total_pages = total_stats.total_pages or 0
+    local total_time = ReadingStats:formatTime(total_stats.total_time or 0)
+
+    local card_spacing = UIConfig:dim("stat_card_spacing")
+    local card_height = UIConfig:dim("stat_card_height")
+    local value_font = UIConfig:fontSize("stat_value")
+    local label_font = UIConfig:fontSize("stat_label")
+
+    local fg_color = UIConfig:color("foreground")
+    local muted_color = UIConfig:color("muted")
+    local bg_color = UIConfig:color("background")
+
+    local total_spacing = card_spacing * 2
+    local third_width = math.floor((content_width - total_spacing) / 3)
+
+    local function createStatCard(value, label)
+        local stat_group = VerticalGroup:new{align = "center"}
+        table.insert(stat_group, TextWidget:new{
+            text = tostring(value),
+            face = UIConfig:getFont("tfont", value_font),
+            fgcolor = fg_color,
+        })
+        table.insert(stat_group, VerticalSpan:new{width = UIConfig:spacing("xs")})
+        table.insert(stat_group, TextWidget:new{
+            text = label,
+            face = UIConfig:getFont("cfont", label_font),
+            fgcolor = muted_color,
+        })
+        return stat_group
+    end
+
+    local books_stat = createStatCard(total_books, _("Books"))
+    local pages_stat = createStatCard(total_pages, _("Pages"))
+    local time_stat = createStatCard(total_time, _("Total Time"))
+
+    local stats_row = HorizontalGroup:new{align = "center"}
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = third_width, h = card_height},
+        books_stat,
+    })
+    table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = third_width, h = card_height},
+        pages_stat,
+    })
+    table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = third_width, h = card_height},
+        time_stat,
+    })
+
+    return FrameContainer:new{
+        width = content_width,
+        padding = UIConfig:spacing("sm"),
+        bordersize = UIConfig:dim("border_thin"),
+        background = bg_color,
+        stats_row,
+    }
+end
+
+--[[--
+Build Today/Week reading stats comparison widget.
+Matches the Read page layout.
+@param content_width number Width of content area
+@param today_db table Pre-fetched today stats (optional)
+@param week_db table Pre-fetched week stats (optional)
+@treturn Widget Stats comparison widget
+--]]
+function Dashboard:buildPeriodReadingStats(content_width, today_db, week_db)
+    -- Use pre-fetched stats or query (for backward compatibility)
+    today_db = today_db or ReadingStats:getTodayStatsFromDB()
+    week_db = week_db or ReadingStats:getWeekStatsFromDB()
+
+    local today_pages = today_db.pages or 0
+    local today_time = ReadingStats:formatTime(today_db.time or 0)
+
+    local week_pages = week_db.pages or 0
+    local week_time = ReadingStats:formatTime(week_db.time or 0)
+
+    local card_spacing = UIConfig:dim("stat_card_spacing")
+    local card_height = UIConfig:dim("stat_card_height")
+    local caption_font = UIConfig:fontSize("caption")
+    local body_font = UIConfig:fontSize("body")
+
+    local fg_color = UIConfig:color("foreground")
+    local muted_color = UIConfig:color("muted")
+    local bg_color = UIConfig:color("background")
+
+    local function createPeriodStats(title, pages, time)
+        local stats_group = VerticalGroup:new{align = "center"}
+        table.insert(stats_group, TextWidget:new{
+            text = title,
+            face = UIConfig:getFont("tfont", caption_font),
+            fgcolor = muted_color,
+        })
+        table.insert(stats_group, VerticalSpan:new{width = UIConfig:spacing("xs")})
+        table.insert(stats_group, TextWidget:new{
+            text = string.format("%d page%s", pages, pages == 1 and "" or "s"),
+            face = UIConfig:getFont("tfont", body_font),
+            fgcolor = fg_color,
+        })
+        table.insert(stats_group, TextWidget:new{
+            text = time,
+            face = UIConfig:getFont("cfont", caption_font),
+            fgcolor = muted_color,
+        })
+        return stats_group
+    end
+
+    local left_stats = createPeriodStats(_("Today"), today_pages, today_time)
+    local right_stats = createPeriodStats(_("This Week"), week_pages, week_time)
+
+    local outer_padding = UIConfig:spacing("sm")
+    local outer_border = UIConfig:dim("border_thin")
+    local inner_content_width = content_width - (outer_padding * 2) - (outer_border * 2)
+    local card_width = math.floor((inner_content_width - card_spacing) / 2)
+
+    local stats_row = HorizontalGroup:new{align = "center"}
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = card_width, h = card_height},
+        left_stats,
+    })
+    table.insert(stats_row, HorizontalSpan:new{width = card_spacing})
+    table.insert(stats_row, CenterContainer:new{
+        dimen = Geom:new{w = card_width, h = card_height},
+        right_stats,
+    })
+
+    return FrameContainer:new{
+        width = content_width,
+        padding = UIConfig:spacing("sm"),
+        bordersize = UIConfig:dim("border_thin"),
+        background = bg_color,
+        stats_row,
+    }
 end
 
 --[[--

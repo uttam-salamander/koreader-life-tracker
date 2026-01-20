@@ -1,25 +1,24 @@
 --[[--
 Read module for Life Tracker.
-Displays recently read books in a grid with covers and progress bars.
+Displays reading statistics and recent books using native KOReader patterns.
+
+Uses KOReader's native Menu widget for the book list, following established patterns.
 
 @module lifetracker.read
 --]]
 
 local Blitbuffer = require("ffi/blitbuffer")
+local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
-local DocumentRegistry = require("document/documentregistry")
-local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
-local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
-local ProgressWidget = require("ui/widget/progresswidget")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
@@ -37,40 +36,8 @@ local UIHelpers = require("modules/ui_helpers")
 
 local Read = {}
 
--- Cover cache configuration
-local DataStorage = require("datastorage")
-local COVER_CACHE_DIR = DataStorage:getDataDir() .. "/plugins/lifetracker.koplugin/.covers"
-
--- Grid configuration (scaled via UIConfig)
-local function getGridCols()
-    return UIConfig:dim("grid_columns")
-end
-
-local function getCardSpacing()
-    return UIConfig:dim("padding_default")
-end
-
-local function getProgressBarHeight()
-    return UIConfig:dim("progress_bar_height")
-end
-
--- Scan Books folder for ebooks (development only)
--- Set to nil to use only ReadHistory/database (production)
-Read.TEST_BOOKS_PATH = nil
-
--- Supported ebook extensions
-local EBOOK_EXTENSIONS = {
-    epub = true,
-    pdf = true,
-    mobi = true,
-    azw = true,
-    azw3 = true,
-    fb2 = true,
-    djvu = true,
-    cbz = true,
-    cbr = true,
-    txt = true,
-}
+-- Configuration
+local MAX_RECENT_BOOKS = 6  -- 2 rows x 3 columns for optimal performance
 
 --[[--
 Show the read view.
@@ -78,286 +45,242 @@ Show the read view.
 --]]
 function Read:show(ui)
     self.ui = ui
-    self.books = {}
-    self.cover_widgets = {}  -- Store references for lazy loading
     self:showReadView()
 end
 
 --[[--
-Ensure cover cache directory exists.
-@treturn string Cache directory path
+Extract title from file path.
+@param filepath string Full path to the book file
+@treturn string Extracted title
 --]]
-function Read:ensureCacheDir()
-    local ok, lfs = pcall(require, "libs/libkoreader-lfs")
-    if not ok then
-        ok, lfs = pcall(require, "lfs")
+function Read:extractTitle(filepath)
+    if not filepath then return _("Unknown") end
+
+    local filename = filepath:match("([^/]+)$") or filepath
+    filename = filename:gsub("%.[^.]+$", "")
+    filename = filename:gsub("[_-]", " ")
+    return filename
+end
+
+-- Cover cache directory
+local COVER_CACHE_DIR = nil
+
+--[[--
+Get or create the cover cache directory.
+@treturn string Path to cover cache directory
+--]]
+function Read:getCoverCacheDir()
+    if COVER_CACHE_DIR then return COVER_CACHE_DIR end
+
+    local DataStorage = require("datastorage")
+    COVER_CACHE_DIR = DataStorage:getDataDir() .. "/cache/lifetracker-covers"
+
+    local lfs = require("libs/libkoreader-lfs")
+    if lfs.attributes(COVER_CACHE_DIR, "mode") ~= "directory" then
+        lfs.mkdir(COVER_CACHE_DIR)
     end
-    if ok and lfs then
-        local attr = lfs.attributes(COVER_CACHE_DIR)
-        if not attr then
-            -- Create parent directories if needed
-            local parent = COVER_CACHE_DIR:match("(.+)/[^/]+$")
-            if parent then
-                lfs.mkdir(parent)
-            end
-            lfs.mkdir(COVER_CACHE_DIR)
-        end
-    end
+
     return COVER_CACHE_DIR
 end
 
 --[[--
-Generate a cache key from filepath.
-Uses a simple hash to create a filename-safe key.
+Generate a cache key for a book's cover.
 @param filepath string Full path to the book file
-@treturn string Cache key (filename safe)
+@treturn string Cache filename
 --]]
-function Read:getCacheKey(filepath)
+function Read:getCoverCacheKey(filepath)
+    -- Use a simple hash of the filepath + file modification time
+    local lfs = require("libs/libkoreader-lfs")
+    local attr = lfs.attributes(filepath)
+    local mtime = attr and attr.modification or 0
+
+    -- Simple string hash
+    local hash = 0
+    for i = 1, #filepath do
+        hash = (hash * 31 + filepath:byte(i)) % 2147483647
+    end
+
+    return string.format("%d_%d.png", hash, mtime)
+end
+
+--[[--
+Get book metadata from DocSettings (fast, no document open).
+Also retrieves progress in the same call.
+
+@param filepath string Full path to the book file
+@treturn table Book info with title, authors, progress
+--]]
+function Read:getBookMetadata(filepath)
     if not filepath then return nil end
-    -- Simple hash: use last part of path + length
-    local filename = filepath:match("([^/]+)$") or filepath
-    -- Remove extension and sanitize
-    local base = filename:gsub("%.[^%.]+$", ""):gsub("[^%w]", "_"):sub(1, 40)
-    -- Add a simple checksum based on full path length and first/last chars
-    local checksum = #filepath
-    if #filepath > 1 then
-        checksum = checksum + filepath:byte(1) + filepath:byte(-1)
-    end
-    return string.format("%s_%d.png", base, checksum)
-end
 
---[[--
-Get the full path for a cached cover.
-@param filepath string Full path to the book file
-@treturn string Full path to cached cover file
---]]
-function Read:getCachedCoverPath(filepath)
-    local key = self:getCacheKey(filepath)
-    if not key then return nil end
-    return COVER_CACHE_DIR .. "/" .. key
-end
+    local bookinfo = { progress = 0 }
 
---[[--
-Check if a cached cover exists.
-@param filepath string Full path to the book file
-@treturn boolean True if cached cover exists
---]]
-function Read:hasCachedCover(filepath)
-    local cache_path = self:getCachedCoverPath(filepath)
-    if not cache_path then return false end
-
-    local ok, lfs = pcall(require, "libs/libkoreader-lfs")
-    if not ok then
-        ok, lfs = pcall(require, "lfs")
-    end
-    if ok and lfs then
-        local attr = lfs.attributes(cache_path)
-        return attr ~= nil and attr.mode == "file"
-    end
-    return false
-end
-
---[[--
-Save a blitbuffer cover image to cache.
-@param filepath string Full path to the book file
-@param bb BlitBuffer The cover image blitbuffer
---]]
-function Read:saveCoverToCache(filepath, bb)
-    if not filepath or not bb then return end
-
-    self:ensureCacheDir()
-    local cache_path = self:getCachedCoverPath(filepath)
-    if not cache_path then return end
-
-    -- Use KOReader's Blitbuffer write function if available
-    local ok = pcall(function()
-        local png = require("ffi/png")
-        if png and png.encodeToFile then
-            png.encodeToFile(cache_path, bb)
-        end
-    end)
-
-    if not ok then
-        -- Fallback: try using bb's built-in save if available
-        pcall(function()
-            if bb.writePNG then
-                bb:writePNG(cache_path)
+    local dok, DocSettings = pcall(require, "docsettings")
+    if dok and DocSettings then
+        local doc_settings = DocSettings:open(filepath)
+        if doc_settings then
+            -- Get metadata
+            local doc_props = doc_settings:readSetting("doc_props")
+            if doc_props then
+                bookinfo.title = doc_props.title
+                bookinfo.authors = doc_props.authors
             end
+            -- Get progress in same call (avoids duplicate file read)
+            local pct = doc_settings:readSetting("percent_finished")
+            if pct then
+                bookinfo.progress = pct
+            end
+        end
+    end
+
+    -- Fallback: extract title from filename
+    if not bookinfo.title or bookinfo.title == "" then
+        bookinfo.title = self:extractTitle(filepath)
+    end
+
+    return bookinfo
+end
+
+--[[--
+Get cover for a book, using cache when available.
+This is the expensive operation - call sparingly.
+
+@param filepath string Full path to the book file
+@param cover_width number Desired cover width
+@param cover_height number Desired cover height
+@treturn BlitBuffer|nil Cover image or nil
+--]]
+function Read:getBookCover(filepath, cover_width, cover_height)
+    if not filepath then return nil end
+
+    local lfs = require("libs/libkoreader-lfs")
+    local logger = require("logger")
+
+    -- Check cache first
+    local cache_dir = self:getCoverCacheDir()
+    local cache_key = self:getCoverCacheKey(filepath)
+    local cache_path = cache_dir .. "/" .. cache_key
+
+    if lfs.attributes(cache_path, "mode") == "file" then
+        -- Load from cache (use : for method call)
+        local RenderImage = require("ui/renderimage")
+        local cover_bb = RenderImage:renderImageFile(cache_path, false, cover_width, cover_height)
+        if cover_bb then
+            logger.dbg("LifeTracker: Loaded cover from cache:", cache_path)
+            return cover_bb
+        end
+    end
+
+    -- Extract cover from document (expensive!)
+    local DocumentRegistry = require("document/documentregistry")
+    if not DocumentRegistry:hasProvider(filepath) then
+        return nil
+    end
+
+    logger.dbg("LifeTracker: Extracting cover from:", filepath)
+    local doc = DocumentRegistry:openDocument(filepath)
+    if not doc then return nil end
+
+    -- Load metadata only (not full document)
+    if doc.loadDocument then
+        doc:loadDocument(false)
+    end
+
+    local cover_bb = doc:getCoverPageImage()
+    doc:close()
+
+    if not cover_bb then return nil end
+
+    -- Scale to target size
+    local scale_w = cover_width / cover_bb:getWidth()
+    local scale_h = cover_height / cover_bb:getHeight()
+    local scale = math.min(scale_w, scale_h)
+
+    local result_bb
+    if scale < 1 then
+        result_bb = cover_bb:scale(
+            math.floor(cover_bb:getWidth() * scale),
+            math.floor(cover_bb:getHeight() * scale)
+        )
+        cover_bb:free()
+    else
+        result_bb = cover_bb
+    end
+
+    -- Save to cache for next time
+    if result_bb then
+        local ok, err = pcall(function()
+            result_bb:writePNG(cache_path)
         end)
+        if ok then
+            logger.dbg("LifeTracker: Saved cover to cache:", cache_path)
+        else
+            logger.dbg("LifeTracker: Failed to cache cover:", err)
+        end
     end
+
+    return result_bb
 end
 
 --[[--
-Load a cover from cache.
+Create a cover placeholder widget when no cover is available.
+@param width number Width of the placeholder
+@param height number Height of the placeholder
+@treturn Widget Placeholder widget
+--]]
+function Read:createCoverPlaceholder(width, height)
+    local placeholder_color = Blitbuffer.Color8(0xDD)  -- Light gray
+
+    return FrameContainer:new{
+        width = width,
+        height = height,
+        padding = 0,
+        margin = 0,
+        bordersize = 0,
+        background = placeholder_color,
+        CenterContainer:new{
+            dimen = Geom:new{w = width, h = height},
+            TextWidget:new{
+                text = "📖",
+                face = UIConfig:getFont("cfont", UIConfig:fontSize("body")),
+                fgcolor = UIConfig:color("muted"),
+            },
+        },
+    }
+end
+
+--[[--
+Open a book file.
 @param filepath string Full path to the book file
-@param width number Desired width
-@param height number Desired height
-@treturn Widget|nil ImageWidget if cached, nil otherwise
 --]]
-function Read:loadCoverFromCache(filepath, width, height)
-    if not self:hasCachedCover(filepath) then return nil end
+function Read:openBook(filepath)
+    if not filepath then return end
 
-    local cache_path = self:getCachedCoverPath(filepath)
-    local ok, result = pcall(function()
-        return ImageWidget:new{
-            file = cache_path,
-            width = width,
-            height = height,
-            scale_factor = 0,
-            autostretch = true,
-        }
-    end)
+    UIHelpers.closeWidget(self, "read_widget")
 
-    if ok and result then
-        return result
-    end
-    return nil
+    local ReaderUI = require("apps/reader/readerui")
+    ReaderUI:showReader(filepath)
 end
 
 --[[--
-Load covers asynchronously after initial render.
-Loads covers in batches with batched UI refreshes for better e-ink performance.
+Get recent books from ReadHistory.
+@treturn table Array of menu items for Menu widget
 --]]
-function Read:loadCoversAsync()
-    if not self.books or #self.books == 0 then return end
-    if not self.cover_widgets then return end
+function Read:getRecentBooksMenuItems()
+    local items = {}
+    local read_module = self
 
-    local book_index = 1
-    local covers_loaded_since_refresh = 0
-    local BATCH_SIZE = 3  -- Refresh UI after loading this many covers
-    local MAX_BOOKS = 12  -- Limit to avoid loading too many
-
-    local function loadNextCover()
-        if book_index > #self.books or book_index > MAX_BOOKS then
-            -- All done, trigger final refresh if any covers were loaded
-            if covers_loaded_since_refresh > 0 and self.read_widget then
-                UIManager:setDirty(self.read_widget, "ui")
-            end
-            return
-        end
-
-        local book = self.books[book_index]
-        local widget_ref = self.cover_widgets[book_index]
-
-        if book and book.file and widget_ref and widget_ref.cover_container then
-            -- Try cache first (fast path)
-            local cover = self:loadCoverFromCache(book.file, widget_ref.width, widget_ref.height)
-
-            if not cover then
-                -- Extract cover from document (slow operation)
-                local cover_bb = nil
-                local ok, doc = pcall(function()
-                    return DocumentRegistry:openDocument(book.file)
-                end)
-
-                if ok and doc then
-                    pcall(function()
-                        if doc.getCoverPageImage then
-                            local cok, cover_result = pcall(doc.getCoverPageImage, doc)
-                            if cok and cover_result then
-                                cover_bb = cover_result
-                                -- Save to cache for next time
-                                self:saveCoverToCache(book.file, cover_bb)
-                            end
-                        end
-                    end)
-                    doc:close()
-                end
-
-                if cover_bb then
-                    cover = ImageWidget:new{
-                        image = cover_bb,
-                        width = widget_ref.width,
-                        height = widget_ref.height,
-                        scale_factor = 0,
-                        autostretch = true,
-                    }
-                end
-            end
-
-            -- Update the widget if we got a cover
-            if cover and widget_ref.cover_container then
-                -- Replace the placeholder with the real cover
-                widget_ref.cover_container[1] = cover
-                covers_loaded_since_refresh = covers_loaded_since_refresh + 1
-
-                -- Batch UI refreshes for better e-ink performance
-                if covers_loaded_since_refresh >= BATCH_SIZE then
-                    if self.read_widget then
-                        UIManager:setDirty(self.read_widget, "ui")
-                    end
-                    covers_loaded_since_refresh = 0
-                end
-            end
-        end
-
-        book_index = book_index + 1
-        -- Schedule next cover load with a small delay to keep UI responsive
-        -- Longer delay if we just did a refresh (let e-ink settle)
-        local delay = covers_loaded_since_refresh == 0 and 0.15 or 0.03
-        UIManager:scheduleIn(delay, loadNextCover)
+    local ok, ReadHistory = pcall(require, "readhistory")
+    if not ok or not ReadHistory or not ReadHistory.hist then
+        return items
     end
 
-    -- Start loading after a short delay to let initial render complete
-    UIManager:scheduleIn(0.2, loadNextCover)
-end
-
---[[--
-Scan a directory for ebook files.
---]]
-function Read:scanDirectoryForBooks(dir_path)
-    local files = {}
-
-    local ok, lfs = pcall(require, "libs/libkoreader-lfs")
-    if not ok then
-        ok, lfs = pcall(require, "lfs")
-    end
-
-    if not ok or not lfs then
-        return files
-    end
-
-    pcall(function()
-        for entry in lfs.dir(dir_path) do
-            if entry ~= "." and entry ~= ".." then
-                local filepath = dir_path .. "/" .. entry
-                local attr = lfs.attributes(filepath)
-
-                if attr and attr.mode == "file" then
-                    local ext = entry:match("%.([^%.]+)$")
-                    if ext and EBOOK_EXTENSIONS[ext:lower()] then
-                        table.insert(files, {
-                            file = filepath,
-                            time = attr.modification or os.time(),
-                        })
-                    end
-                end
-            end
-        end
-    end)
-
-    table.sort(files, function(a, b)
-        return (a.time or 0) > (b.time or 0)
-    end)
-
-    return files
-end
-
---[[--
-Get recently read books.
---]]
-function Read:getRecentBooks()
-    local books = {}
-
-    -- First: scan Books folder if configured
-    if self.TEST_BOOKS_PATH then
-        local files = self:scanDirectoryForBooks(self.TEST_BOOKS_PATH)
-
-        for i, item in ipairs(files) do
-            if i > 12 then break end
-
+    local count = 0
+    for _, item in ipairs(ReadHistory.hist) do
+        if count >= MAX_RECENT_BOOKS then break end
+        if item.file and not item.dim then
+            -- Get progress from DocSettings
             local progress = 0
-            -- Try to get real progress from DocSettings
             local dok, DocSettings = pcall(require, "docsettings")
             if dok and DocSettings then
                 local doc_settings = DocSettings:open(item.file)
@@ -366,270 +289,52 @@ function Read:getRecentBooks()
                     if pct then
                         progress = pct
                     end
-                    -- DocSettings doesn't need explicit close
                 end
             end
 
-            local book = {
-                file = item.file,
-                title = self:extractTitle(item.file),
-                time = item.time,
-                progress = progress,
-            }
-            table.insert(books, book)
-        end
+            local title = self:extractTitle(item.file)
+            local progress_text = string.format("%d%%", math.floor(progress * 100))
+            local book_file = item.file
 
-        if #books > 0 then
-            return books
-        end
-    end
-
-    -- Fallback: use KOReader's ReadHistory
-    local ok, ReadHistory = pcall(require, "readhistory")
-    if ok and ReadHistory then
-        local history = ReadHistory.hist or {}
-
-        for i, item in ipairs(history) do
-            if i > 12 then break end
-
-            if item.file and not item.dim then
-                local book = {
-                    file = item.file,
-                    title = self:extractTitle(item.file),
-                    time = item.time,
-                    progress = 0,
-                }
-
-                -- Try to get progress
-                local dok, DocSettings = pcall(require, "docsettings")
-                if dok and DocSettings then
-                    local doc_settings = DocSettings:open(item.file)
-                    if doc_settings then
-                        local pct = doc_settings:readSetting("percent_finished")
-                        if pct then
-                            book.progress = pct
-                        end
-                        -- DocSettings doesn't need explicit close
-                    end
-                end
-
-                table.insert(books, book)
-            end
-        end
-
-        if #books > 0 then
-            return books
+            -- Standard Menu item format (same pattern used throughout KOReader)
+            table.insert(items, {
+                text = title,
+                mandatory = progress_text,
+                callback = function()
+                    read_module:openBook(book_file)
+                end,
+            })
+            count = count + 1
         end
     end
 
-    -- Last fallback: Get books from KOReader statistics database
-    local db_books = ReadingStats:getRecentBooksFromDB(12) or {}
-    for _, db_book in ipairs(db_books) do
-        table.insert(books, {
-            file = nil,  -- DB doesn't store file path
-            title = db_book.title,
-            time = db_book.last_open,
-            progress = db_book.progress,
-            pages = db_book.pages,
-            pages_read = db_book.pages_read,
-            total_time = db_book.total_time,
-        })
-    end
-
-    return books
-end
-
---[[--
-Extract title from file path.
---]]
-function Read:extractTitle(filepath)
-    if not filepath then return "Unknown" end
-
-    local filename = filepath:match("([^/]+)$") or filepath
-    filename = filename:gsub("%.[^.]+$", "")
-    filename = filename:gsub("[_-]", " ")
-    return filename
-end
-
---[[--
-Open a book file.
---]]
-function Read:openBook(filepath)
-    if not filepath then return end
-
-    if self.read_widget then
-        UIManager:close(self.read_widget)
-        self.read_widget = nil
-    end
-
-    local ReaderUI = require("apps/reader/readerui")
-    ReaderUI:showReader(filepath)
-end
-
---[[--
-Create a placeholder cover.
---]]
-function Read:createPlaceholderCover(width, height)
-    return FrameContainer:new{
-        width = width,
-        height = height,
-        padding = 0,
-        margin = 0,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_LIGHT_GRAY,
-        CenterContainer:new{
-            dimen = Geom:new{w = width, h = height},
-            TextWidget:new{
-                text = "?",
-                face = Font:getFace("tfont", 28),
-                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-            },
-        },
-    }
-end
-
---[[--
-Get cover image for a book.
---]]
-function Read:getCoverImage(filepath, width, height)
-    if not filepath then
-        return self:createPlaceholderCover(width, height)
-    end
-
-    local cover_bb = nil
-
-    local ok, doc = pcall(function()
-        return DocumentRegistry:openDocument(filepath)
-    end)
-
-    if ok and doc then
-        -- Wrap cover extraction in pcall to ensure doc:close() always runs
-        pcall(function()
-            if doc.getCoverPageImage then
-                local cok, cover = pcall(doc.getCoverPageImage, doc)
-                if cok and cover then
-                    cover_bb = cover
-                end
-            end
-        end)
-        doc:close()  -- Always close document to prevent resource leak
-    end
-
-    if cover_bb then
-        return ImageWidget:new{
-            image = cover_bb,
-            width = width,
-            height = height,
-            scale_factor = 0,
-            autostretch = true,
-        }
-    end
-
-    return self:createPlaceholderCover(width, height)
-end
-
---[[--
-Create a book card widget with placeholder cover for lazy loading.
-@param book table Book info with file, title, progress
-@param card_width number Card width in pixels
-@param card_height number Card height in pixels
-@param book_index number Index of book for lazy loading reference
-@treturn Widget The book card widget
---]]
-function Read:createBookCard(book, card_width, card_height, book_index)
-    local title_height = 28
-    local progress_height = getProgressBarHeight() + 2
-    local cover_height = card_height - title_height - progress_height
-
-    -- Create placeholder cover initially (will be replaced asynchronously)
-    local placeholder = self:createPlaceholderCover(card_width, cover_height)
-
-    -- Create a container that can hold the cover (for lazy update)
-    local cover_container = VerticalGroup:new{
-        align = "center",
-        placeholder,  -- This will be replaced with real cover
-    }
-
-    -- Store reference for lazy loading
-    if book_index and book.file then
-        self.cover_widgets[book_index] = {
-            cover_container = cover_container,
-            width = card_width,
-            height = cover_height,
-        }
-    end
-
-    local title_text = book.title or "Unknown"
-    if #title_text > 14 then
-        title_text = title_text:sub(1, 12) .. ".."
-    end
-
-    local title_widget = CenterContainer:new{
-        dimen = Geom:new{w = card_width, h = title_height},
-        TextWidget:new{
-            text = title_text,
-            face = Font:getFace("tfont", 10),
-            fgcolor = Blitbuffer.COLOR_BLACK,
-        },
-    }
-
-    local progress_widget = ProgressWidget:new{
-        width = card_width,
-        height = getProgressBarHeight(),
-        percentage = book.progress or 0,
-        margin_h = 0,
-        margin_v = 0,
-        radius = 0,
-        bordersize = 0,
-        bgcolor = Blitbuffer.COLOR_LIGHT_GRAY,
-        fillcolor = Blitbuffer.COLOR_BLACK,
-    }
-
-    local card_content = VerticalGroup:new{
-        align = "center",
-    }
-    table.insert(card_content, cover_container)
-    table.insert(card_content, title_widget)
-    table.insert(card_content, progress_widget)
-
-    return FrameContainer:new{
-        width = card_width,
-        height = card_height,
-        padding = 0,
-        margin = 0,
-        bordersize = 1,
-        background = Blitbuffer.COLOR_WHITE,
-        card_content,
-    }
+    return items
 end
 
 --[[--
 Create the all-time book stats widget from KOReader statistics.
+@param content_width number Width of the content area
+@treturn Widget Stats row widget
 --]]
 function Read:createBookStatsRow(content_width)
-    -- Get total stats from KOReader's statistics database
     local total_stats = ReadingStats:getTotalReadingStats()
 
     local total_books = total_stats.total_books or 0
     local total_pages = total_stats.total_pages or 0
     local total_time = ReadingStats:formatTime(total_stats.total_time or 0)
 
-    -- Use UIConfig for consistent spacing and sizing
     local card_spacing = UIConfig:dim("stat_card_spacing")
     local card_height = UIConfig:dim("stat_card_height")
     local value_font = UIConfig:fontSize("stat_value")
     local label_font = UIConfig:fontSize("stat_label")
 
-    -- Get colors (night mode aware)
     local fg_color = UIConfig:color("foreground")
     local muted_color = UIConfig:color("muted")
     local bg_color = UIConfig:color("background")
 
-    -- Calculate card widths: account for spacing between 3 cards
-    local total_spacing = card_spacing * 2  -- Two gaps between three cards
+    local total_spacing = card_spacing * 2
     local third_width = math.floor((content_width - total_spacing) / 3)
 
-    -- Helper to create a stat card
     local function createStatCard(value, label)
         local stat_group = VerticalGroup:new{align = "center"}
         table.insert(stat_group, TextWidget:new{
@@ -646,11 +351,10 @@ function Read:createBookStatsRow(content_width)
         return stat_group
     end
 
-    local books_stat = createStatCard(total_books, "Books")
-    local pages_stat = createStatCard(total_pages, "Pages")
-    local time_stat = createStatCard(total_time, "Total Time")
+    local books_stat = createStatCard(total_books, _("Books"))
+    local pages_stat = createStatCard(total_pages, _("Pages"))
+    local time_stat = createStatCard(total_time, _("Total Time"))
 
-    -- Build stats row with proper spacing
     local stats_row = HorizontalGroup:new{align = "center"}
     table.insert(stats_row, CenterContainer:new{
         dimen = Geom:new{w = third_width, h = card_height},
@@ -678,13 +382,13 @@ end
 
 --[[--
 Create the reading stats widget (today/this week).
+@param content_width number Width of the content area
+@treturn Widget Stats overview widget
 --]]
 function Read:createStatsOverview(content_width)
-    -- Try to get stats from KOReader database first
     local today_db = ReadingStats:getTodayStatsFromDB()
     local week_db = ReadingStats:getWeekStatsFromDB()
 
-    -- Fallback to stored logs if database not available
     local weekly = ReadingStats:getWeeklyStats()
     local today_stats = ReadingStats:getTodayStats(self.ui)
 
@@ -696,18 +400,15 @@ function Read:createStatsOverview(content_width)
     local week_time_sec = week_db.time > 0 and week_db.time or (weekly.total_time or 0)
     local week_time = ReadingStats:formatTime(week_time_sec)
 
-    -- Use UIConfig for consistent spacing and colors (match book stats row)
     local card_spacing = UIConfig:dim("stat_card_spacing")
     local card_height = UIConfig:dim("stat_card_height")
     local caption_font = UIConfig:fontSize("caption")
     local body_font = UIConfig:fontSize("body")
 
-    -- Get colors (night mode aware)
     local fg_color = UIConfig:color("foreground")
     local muted_color = UIConfig:color("muted")
     local bg_color = UIConfig:color("background")
 
-    -- Helper to create period stats (centered in container)
     local function createPeriodStats(title, pages, time)
         local stats_group = VerticalGroup:new{align = "center"}
         table.insert(stats_group, TextWidget:new{
@@ -729,16 +430,14 @@ function Read:createStatsOverview(content_width)
         return stats_group
     end
 
-    local left_stats = createPeriodStats("Today", today_pages, today_time)
-    local right_stats = createPeriodStats("This Week", week_pages, week_time)
+    local left_stats = createPeriodStats(_("Today"), today_pages, today_time)
+    local right_stats = createPeriodStats(_("This Week"), week_pages, week_time)
 
-    -- Calculate card widths to match book stats row styling
     local outer_padding = UIConfig:spacing("sm")
     local outer_border = UIConfig:dim("border_thin")
     local inner_content_width = content_width - (outer_padding * 2) - (outer_border * 2)
     local card_width = math.floor((inner_content_width - card_spacing) / 2)
 
-    -- Use same height as upper stats row
     local stats_row = HorizontalGroup:new{align = "center"}
     table.insert(stats_row, CenterContainer:new{
         dimen = Geom:new{w = card_width, h = card_height},
@@ -750,7 +449,6 @@ function Read:createStatsOverview(content_width)
         right_stats,
     })
 
-    -- Wrap in FrameContainer with same styling as book stats row
     return FrameContainer:new{
         width = content_width,
         padding = UIConfig:spacing("sm"),
@@ -761,65 +459,345 @@ function Read:createStatsOverview(content_width)
 end
 
 --[[--
-Create the book grid widget.
+Create quick action buttons.
+@treturn Widget Quick actions widget
 --]]
-function Read:createBookGrid(books, content_width)
-    local card_positions = {}
+function Read:createQuickActions()
+    local button_spacing = UIConfig:spacing("sm")
+    local fg_color = UIConfig:color("foreground")
+    local muted_color = UIConfig:color("muted")
+    local read_module = self
 
-    if #books == 0 then
-        return TextWidget:new{
-            text = "No recently read books",
-            face = Font:getFace("tfont", 14),
-            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
-        }, card_positions
+    -- Get last book from ReadHistory for "Continue Reading" button
+    local last_book = nil
+    local last_book_title = nil
+    local ok, ReadHistory = pcall(require, "readhistory")
+    if ok and ReadHistory and ReadHistory.hist and #ReadHistory.hist > 0 then
+        for _, item in ipairs(ReadHistory.hist) do
+            if item.file and not item.dim then
+                last_book = item.file
+                last_book_title = self:extractTitle(item.file)
+                if #last_book_title > 20 then
+                    last_book_title = last_book_title:sub(1, 18) .. ".."
+                end
+                break
+            end
+        end
     end
 
-    local total_spacing = getCardSpacing() * (getGridCols() - 1)
-    local card_width = math.floor((content_width - total_spacing) / getGridCols())
-    local card_height = math.floor(card_width * 1.5)
+    local buttons = VerticalGroup:new{align = "left"}
 
-    self.card_width = card_width
-    self.card_height = card_height
-
-    local grid = VerticalGroup:new{align = "left"}
-
-    table.insert(grid, TextWidget:new{
-        text = "Recently Read",
-        face = Font:getFace("tfont", 16),
-        fgcolor = Blitbuffer.COLOR_BLACK,
+    -- Section header
+    table.insert(buttons, TextWidget:new{
+        text = _("Quick Actions"),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("section_title")),
+        fgcolor = fg_color,
     })
-    table.insert(grid, VerticalSpan:new{width = Size.padding.small})
+    table.insert(buttons, VerticalSpan:new{width = UIConfig:spacing("sm")})
 
-    local row = HorizontalGroup:new{align = "top"}
-    local row_count = 0
+    local button_row = HorizontalGroup:new{align = "center"}
 
-    for i, book in ipairs(books) do
-        if (i - 1) % getGridCols() == 0 and i > 1 then
-            table.insert(grid, row)
-            table.insert(grid, VerticalSpan:new{width = getCardSpacing()})
-            row = HorizontalGroup:new{align = "top"}
-            row_count = row_count + 1
-        elseif i > 1 then
-            table.insert(row, HorizontalSpan:new{width = getCardSpacing()})
+    -- Continue Reading button (if there's a last book)
+    if last_book then
+        local continue_btn = Button:new{
+            text = _("▶ Continue"),
+            text_font_face = "cfont",
+            text_font_size = UIConfig:fontSize("body"),
+            radius = Size.radius.button,
+            padding = Size.padding.button,
+            margin = 0,
+            callback = function()
+                read_module:openBook(last_book)
+            end,
+        }
+        table.insert(button_row, continue_btn)
+        table.insert(button_row, HorizontalSpan:new{width = button_spacing})
+    end
+
+    -- Open File Manager button
+    local file_manager_btn = Button:new{
+        text = _("📁 Browse Books"),
+        text_font_face = "cfont",
+        text_font_size = UIConfig:fontSize("body"),
+        radius = Size.radius.button,
+        padding = Size.padding.button,
+        margin = 0,
+        callback = function()
+            UIHelpers.closeWidget(read_module, "read_widget")
+            local FileManager = require("apps/filemanager/filemanager")
+            if FileManager.instance then
+                FileManager.instance:onRefresh()
+            else
+                FileManager:showFiles()
+            end
+        end,
+    }
+    table.insert(button_row, file_manager_btn)
+
+    table.insert(buttons, button_row)
+
+    -- Show what book "Continue" will open
+    if last_book_title then
+        table.insert(buttons, VerticalSpan:new{width = UIConfig:spacing("xs")})
+        table.insert(buttons, TextWidget:new{
+            text = _("Last: ") .. last_book_title,
+            face = UIConfig:getFont("cfont", UIConfig:fontSize("caption")),
+            fgcolor = muted_color,
+        })
+    end
+
+    return buttons
+end
+
+--[[--
+Create the recent books section as a grid with cover thumbnails.
+Uses BookInfoManager for efficient cover loading from KOReader's cache.
+
+@param content_width number Width of the content area
+@treturn Widget Recent books grid with covers
+--]]
+function Read:createRecentBooksList(content_width)
+    local fg_color = UIConfig:color("foreground")
+    local muted_color = UIConfig:color("muted")
+    local read_module = self
+
+    local container = VerticalGroup:new{align = "left"}
+
+    -- Section header
+    table.insert(container, TextWidget:new{
+        text = _("Recent Books"),
+        face = UIConfig:getFont("tfont", UIConfig:fontSize("section_title")),
+        fgcolor = fg_color,
+    })
+    table.insert(container, VerticalSpan:new{width = UIConfig:spacing("sm")})
+
+    -- Get recent books from ReadHistory
+    local ok, ReadHistory = pcall(require, "readhistory")
+    local books_list = {}
+
+    -- First try ReadHistory
+    if ok and ReadHistory and ReadHistory.hist then
+        for _, item in ipairs(ReadHistory.hist) do
+            if item.file and not item.dim then
+                table.insert(books_list, item.file)
+            end
+        end
+    end
+
+    -- Also scan home/books directory to fill up the grid
+    local lfs = require("libs/libkoreader-lfs")
+    local DataStorage = require("datastorage")
+    local DocumentRegistry = require("document/documentregistry")
+    local logger = require("logger")
+
+    -- Track which files we already have to avoid duplicates
+    local seen_files = {}
+    for _, f in ipairs(books_list) do
+        seen_files[f] = true
+    end
+
+    -- Try common book directories
+    local home_dir = DataStorage:getFullDataDir()
+    local books_dirs = {
+        home_dir .. "/books",
+        home_dir .. "/../home/books",
+        "/tmp/koreader/home/books",
+    }
+
+    logger.dbg("LifeTracker: Scanning for books, home_dir:", home_dir)
+    logger.dbg("LifeTracker: Books from history:", #books_list)
+
+    for _, books_dir in ipairs(books_dirs) do
+        if #books_list >= MAX_RECENT_BOOKS then break end
+
+        logger.dbg("LifeTracker: Checking directory:", books_dir)
+        if lfs.attributes(books_dir, "mode") == "directory" then
+            logger.dbg("LifeTracker: Found directory:", books_dir)
+            for file in lfs.dir(books_dir) do
+                if #books_list >= MAX_RECENT_BOOKS then break end
+                if file ~= "." and file ~= ".." then
+                    local filepath = books_dir .. "/" .. file
+                    if not seen_files[filepath] and DocumentRegistry:hasProvider(filepath) then
+                        logger.dbg("LifeTracker: Found book:", filepath)
+                        table.insert(books_list, filepath)
+                        seen_files[filepath] = true
+                    end
+                end
+            end
+        end
+    end
+
+    logger.dbg("LifeTracker: Total books found:", #books_list)
+
+    if #books_list == 0 then
+        table.insert(container, TextWidget:new{
+            text = _("No recently read books"),
+            face = UIConfig:getFont("cfont", UIConfig:fontSize("body")),
+            fgcolor = muted_color,
+        })
+        return container
+    end
+
+    -- Grid configuration
+    local cols = 3
+    local spacing = UIConfig:spacing("sm")
+    local card_width = math.floor((content_width - spacing * (cols - 1)) / cols)
+    local card_padding = 6
+    local cover_width = card_width - (card_padding * 2)  -- Fill card width
+    local cover_height = math.floor(cover_width * 1.4)   -- Book aspect ratio (~1:1.4)
+    local text_height = 52  -- Space for title + author below cover (increased for larger fonts)
+    local card_height = cover_height + text_height + card_padding * 2
+
+    -- Build grid
+    local grid = VerticalGroup:new{align = "left"}
+    local current_row = HorizontalGroup:new{align = "top"}
+    local items_in_row = 0
+    local book_count = 0
+
+    local pending_cover_bb = nil  -- Track cover for cleanup on early exit
+    for _, filepath in ipairs(books_list) do
+        if book_count >= MAX_RECENT_BOOKS then
+            -- Clean up any pending cover buffer before breaking
+            if pending_cover_bb then
+                pending_cover_bb:free()
+                pending_cover_bb = nil
+            end
+            break
+        end
+        if not filepath then goto continue end
+
+        -- OPTIMIZED: Get metadata + progress in ONE DocSettings call (fast)
+        local bookinfo = self:getBookMetadata(filepath)
+        if not bookinfo then goto continue end
+
+        -- Prepare display data
+        local title = bookinfo.title or self:extractTitle(filepath)
+        local author = bookinfo.authors or ""
+        local progress = bookinfo.progress or 0
+
+        -- Truncate title and author to fit card
+        local max_chars = math.floor(card_width / 7)
+        if #title > max_chars then
+            title = title:sub(1, max_chars - 2) .. ".."
+        end
+        if #author > max_chars then
+            author = author:sub(1, max_chars - 2) .. ".."
         end
 
-        local card = self:createBookCard(book, card_width, card_height, i)
-        table.insert(row, card)
+        -- OPTIMIZED: Get cover with caching (expensive, but cached)
+        -- Store in pending_cover_bb so we can free it if loop exits early
+        pending_cover_bb = self:getBookCover(filepath, cover_width, cover_height)
 
-        local col = (i - 1) % getGridCols()
-        card_positions[i] = {
-            col = col,
-            row = row_count,
-            book = book,
+        -- Create cover widget
+        local cover_widget
+        if pending_cover_bb then
+            cover_widget = ImageWidget:new{
+                image = pending_cover_bb,
+                width = cover_width,
+                height = cover_height,
+                scale_factor = 0,
+                image_disposable = true,  -- ImageWidget takes ownership
+            }
+            pending_cover_bb = nil  -- ImageWidget now owns it, clear tracking
+        else
+            cover_widget = self:createCoverPlaceholder(cover_width, cover_height)
+        end
+
+        -- Build card content: cover + title + author
+        local card_content = VerticalGroup:new{align = "center"}
+
+        -- Cover (centered in card)
+        table.insert(card_content, CenterContainer:new{
+            dimen = Geom:new{w = card_width - card_padding * 2, h = cover_height},
+            cover_widget,
+        })
+
+        table.insert(card_content, VerticalSpan:new{width = 4})
+
+        -- Title (centered, truncated) - use body_small for readability
+        table.insert(card_content, CenterContainer:new{
+            dimen = Geom:new{w = cover_width, h = 24},
+            TextWidget:new{
+                text = title,
+                face = UIConfig:getFont("cfont", UIConfig:fontSize("body_small")),
+                fgcolor = fg_color,
+                max_width = cover_width - 4,
+            },
+        })
+
+        -- Author or progress (centered) - use caption for subtitle
+        local subtitle = author ~= "" and author or string.format("%d%%", math.floor(progress * 100))
+        table.insert(card_content, CenterContainer:new{
+            dimen = Geom:new{w = cover_width, h = 20},
+            TextWidget:new{
+                text = subtitle,
+                face = UIConfig:getFont("cfont", UIConfig:fontSize("caption")),
+                fgcolor = muted_color,
+                max_width = cover_width - 4,
+            },
+        })
+
+        -- Wrap in tappable button
+        local book_file = filepath
+        local card = Button:new{
+            width = card_width,
+            height = card_height,
+            padding = card_padding,
+            margin = 0,
+            bordersize = Size.border.thin,
+            radius = Size.radius.button,
+            callback = function()
+                read_module:openBook(book_file)
+            end,
         }
+        -- Replace button content with our card
+        card[1] = FrameContainer:new{
+            width = card_width,
+            height = card_height,
+            padding = card_padding,
+            margin = 0,
+            bordersize = Size.border.thin,
+            radius = Size.radius.button,
+            background = Blitbuffer.COLOR_WHITE,
+            card_content,
+        }
+
+        -- Add spacing between cards (not before first in row)
+        if items_in_row > 0 then
+            table.insert(current_row, HorizontalSpan:new{width = spacing})
+        end
+
+        table.insert(current_row, card)
+        items_in_row = items_in_row + 1
+        book_count = book_count + 1
+
+        -- Start new row when full
+        if items_in_row >= cols then
+            table.insert(grid, current_row)
+            table.insert(grid, VerticalSpan:new{width = spacing})
+            current_row = HorizontalGroup:new{align = "top"}
+            items_in_row = 0
+        end
+
+        ::continue::
     end
 
-    -- Add last row if it has cards
-    if #row > 0 then
-        table.insert(grid, row)
+    -- Add last partial row
+    if items_in_row > 0 then
+        table.insert(grid, current_row)
     end
 
-    return grid, card_positions
+    if book_count == 0 then
+        table.insert(container, TextWidget:new{
+            text = _("No recently read books"),
+            face = UIConfig:getFont("cfont", UIConfig:fontSize("body")),
+            fgcolor = muted_color,
+        })
+    else
+        table.insert(container, grid)
+    end
+
+    return container
 end
 
 --[[--
@@ -829,36 +807,32 @@ function Read:showReadView()
     local screen_width = Screen:getWidth()
     local screen_height = Screen:getHeight()
 
-    -- Calculate dimensions
     local scroll_width = UIConfig:getScrollWidth()
     local scroll_height = screen_height
     local page_padding = UIConfig:getPagePadding()
     local content_width = UIConfig:getPaddedContentWidth()
 
-    -- Get recent books
-    self.books = self:getRecentBooks()
-
     -- Build content
     local content = VerticalGroup:new{align = "left"}
 
-    -- Title (standardized to page_title size)
+    -- Title
     table.insert(content, TextWidget:new{
-        text = "Reading",
+        text = _("Reading"),
         face = UIConfig:getFont("tfont", UIConfig:fontSize("page_title")),
         fgcolor = UIConfig:color("foreground"),
     })
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("md")})
 
-    -- All-time book stats (from KOReader statistics database)
+    -- All-time book stats
     local book_stats = self:createBookStatsRow(content_width)
     table.insert(content, book_stats)
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("sm")})
 
-    -- Today/Week reading stats row
+    -- Today/Week reading stats
     local stats_widget = self:createStatsOverview(content_width)
     table.insert(content, stats_widget)
 
-    -- Divider (uses muted color for subtle appearance)
+    -- Divider
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("lg")})
     table.insert(content, LineWidget:new{
         dimen = Geom:new{w = content_width, h = 1},
@@ -866,10 +840,21 @@ function Read:showReadView()
     })
     table.insert(content, VerticalSpan:new{width = UIConfig:spacing("md")})
 
-    -- Book grid
-    local grid_widget, card_positions = self:createBookGrid(self.books, content_width)
-    self.card_positions = card_positions
-    table.insert(content, grid_widget)
+    -- Quick actions
+    local quick_actions = self:createQuickActions()
+    table.insert(content, quick_actions)
+
+    -- Divider
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("lg")})
+    table.insert(content, LineWidget:new{
+        dimen = Geom:new{w = content_width, h = 1},
+        background = UIConfig:color("muted"),
+    })
+    table.insert(content, VerticalSpan:new{width = UIConfig:spacing("md")})
+
+    -- Recent books list (simple Button-based list)
+    local recent_books = self:createRecentBooksList(content_width)
+    table.insert(content, recent_books)
 
     -- Bottom padding
     table.insert(content, VerticalSpan:new{width = Size.padding.large * 2})
@@ -903,14 +888,14 @@ function Read:showReadView()
     local tabs = Navigation:buildTabColumn("read", screen_height)
     Navigation.on_tab_change = on_tab_change
 
-    -- Create main layout with full-screen white background to prevent bleed-through
+    -- Create main layout with full-screen white background
     local white_bg = FrameContainer:new{
         width = screen_width,
         height = screen_height,
         padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        VerticalGroup:new{},  -- Empty child required by FrameContainer
+        VerticalGroup:new{},
     }
     local main_layout = OverlapGroup:new{
         dimen = Geom:new{w = screen_width, h = screen_height},
@@ -937,10 +922,7 @@ function Read:showReadView()
     -- Set show_parent for ScrollableContainer
     self.scrollable_container.show_parent = self.read_widget
 
-    -- Setup book tap handlers
-    self:setupBookTapHandlers()
-
-    -- Setup corner gesture handlers using shared helpers
+    -- Setup corner gesture handlers
     local top_safe_zone = UIConfig:getTopSafeZone()
     local gesture_dims = {
         screen_width = screen_width,
@@ -953,60 +935,13 @@ function Read:showReadView()
     end, gesture_dims)
 
     UIManager:show(self.read_widget)
-
-    -- Start loading covers asynchronously after initial render
-    self:loadCoversAsync()
-end
-
---[[--
-Setup tap handlers for book cards.
---]]
-function Read:setupBookTapHandlers()
-    if not self.books or #self.books == 0 then return end
-    if not self.card_positions then return end
-
-    local card_width = self.card_width or 100
-    local card_height = self.card_height or 150
-
-    -- NOTE: The content is laid out with visual_y tracking, but we need to track
-    -- where the book grid actually starts. Use book_grid_y if set, otherwise approximate.
-    -- The header includes: title, stats, section header, spacing - approximately scaled 140px
-    local header_height = self.book_grid_y or UIConfig:scale(160)
-
-    for i, pos in pairs(self.card_positions) do
-        local x = Size.padding.large + pos.col * (card_width + getCardSpacing())
-        local y = header_height + pos.row * (card_height + getCardSpacing())
-
-        local gesture_name = "BookTap_" .. i
-        self.read_widget.ges_events[gesture_name] = {
-            GestureRange:new{
-                ges = "tap",
-                range = Geom:new{
-                    x = x,
-                    y = y,
-                    w = card_width,
-                    h = card_height,
-                },
-            },
-        }
-
-        local book = pos.book
-        local read_module = self
-        self.read_widget["on" .. gesture_name] = function()
-            read_module:openBook(book.file)
-            return true
-        end
-    end
 end
 
 --[[--
 Close the read view.
 --]]
 function Read:close()
-    if self.read_widget then
-        UIManager:close(self.read_widget)
-        self.read_widget = nil
-    end
+    UIHelpers.closeWidget(self, "read_widget")
 end
 
 return Read
