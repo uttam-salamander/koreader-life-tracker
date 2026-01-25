@@ -219,10 +219,6 @@ tail -f /mnt/onboard/.adds/koreader/crash.log  # Kobo
 
 Issues and pull requests welcome!
 
-## Credits
-
-Built with [Claude Code](https://claude.ai/code).
-
 ## License
 
 AGPL-3.0 (same as KOReader)
