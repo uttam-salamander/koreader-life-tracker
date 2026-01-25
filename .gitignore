@@ -9,10 +9,10 @@ REFACTORING_PLAN.md
 TESTING.md
 CLAUDE.md
 
-# Test data
+# Test/demo data
 mock_backup*.json
 Books/
-UI/
+demo_data/
 
 # Claude Code
 .claude/

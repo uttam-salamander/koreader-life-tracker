@@ -4,14 +4,28 @@ A bullet journal-style life planner plugin for KOReader. Track quests, habits, m
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
 
+## Screenshots
+
+<p align="center">
+  <img src="UI/dashboard-home.png" width="270" alt="Dashboard">
+  <img src="UI/quests-daily.png" width="270" alt="Quests">
+  <img src="UI/journal-insights.png" width="270" alt="Journal">
+</p>
+
+<p align="center">
+  <img src="UI/reminders.png" width="270" alt="Reminders">
+  <img src="UI/reading-stats-kobo.jpg" width="270" alt="Reading Stats">
+  <img src="UI/lockscreen.png" width="270" alt="Sleep Screen">
+</p>
+
 ## Features
 
-- **Dashboard** - Morning energy check-in, streak tracking, GitHub-style activity heatmap
-- **Quests** - Daily, weekly, and monthly goals with time slots and energy tags
-- **Reminders** - Time-based gentle notifications while reading
-- **Journal** - Weekly mood tracking, pattern insights, reading correlations
-- **Reading Stats** - Integration with KOReader's reading statistics
-- **Sleep Screen** - Optional dashboard display on device wake
+- **Dashboard** - Morning energy check-in, daily quote, streak tracking, today's quests at a glance
+- **Quests** - Daily, weekly, and monthly goals with streaks and progress tracking
+- **Reminders** - Time-based notifications with customizable schedules
+- **Journal** - Weekly mood graph, category performance spider chart, notes and reflections
+- **Reading Stats** - Integration with KOReader's reading history and statistics
+- **Sleep Screen** - Optional dashboard display when device wakes showing time, quests, and reading progress
 
 ## Installation
 
@@ -59,71 +73,134 @@ After restarting KOReader:
 ### Dashboard
 
 The home screen shows:
-- **Energy Level** - Tap to set your current energy (filters which quests to show)
-- **Streak Counter** - Days in a row completing quests
-- **Activity Heatmap** - 12-week visual of your completion history
-- **Today's Reading** - Pages and time from KOReader stats
+- **Daily Quote** - Rotating motivational quotes (customizable)
+- **Energy Level** - Tap to set your current energy state
+- **Today's Reminders** - Upcoming scheduled reminders
+- **Today's Quests** - Quick view of daily, weekly, and monthly tasks
 
 ### Quests
 
-Organize your goals:
+Organize your goals into three categories:
 - **Daily** - Reset each day (habits, routines)
 - **Weekly** - Reset each week (bigger tasks)
 - **Monthly** - Reset each month (major goals)
 
-Each quest can have:
-- **Time Slot** - Morning, Afternoon, Evening, Night
-- **Energy Tag** - Show only when energy matches
-- **Progress Tracking** - For countable goals (e.g., "Read 30 pages")
+Quest features:
+- **Streaks** - Track consecutive days of completion
+- **Progress Tracking** - For countable goals (e.g., "Drink 8 glasses of water")
+- **Categories** - Organize by Health, Learning, Creativity, Mindfulness, Productivity
+- **Skip Option** - Mark a quest as skipped without breaking your streak
 
 ### Reminders
 
 Set gentle notifications:
 - Choose time (24-hour format)
 - Select repeat days (Daily, Weekdays, Weekends, or custom)
-- Reminders appear as non-intrusive popups while reading
+- View upcoming reminders for today
+- Toggle reminders on/off
 
-### Journal
+### Journal & Insights
 
 Review your patterns:
 - **Weekly Stats** - Completion rate, best days
-- **Mood Graph** - Energy levels over time
-- **Category Performance** - Spider chart of quest categories
-- **Insights** - "You complete 40% more on Energetic days"
-- **Reflections** - Add notes about your week
+- **Mood Graph** - Energy levels throughout the week
+- **Category Performance** - Spider chart showing balance across categories
+- **Notes** - Persistent notes for goals and ideas
+- **Reflections** - Add daily reflections
+
+### Reading Stats
+
+Track your reading:
+- Total books, pages, and reading time
+- Today and this week statistics
+- Recent books with cover images
+- Quick actions to continue reading or browse books
+
+### Sleep Screen
+
+Enable the sleep screen to see your dashboard when your device wakes:
+- Current time and date
+- Daily quote and energy level
+- Quest progress with checklist
+- Reading stats (today and this week)
+- Current streak and activity indicator
+
+Enable via **Settings > Sleep Screen Dashboard**.
 
 ### Settings
 
 Customize the plugin:
 - **Energy Categories** - Rename levels to match your vocabulary
-- **Time Slots** - Adjust to your schedule
+- **Time Slots** - Adjust to your schedule (Morning, Afternoon, Evening, Night)
+- **Quest Categories** - Add or modify category names
+- **Quotes** - Customize your daily quote rotation
+- **UI Scale** - Adjust text size for accessibility (0.8x to 1.5x)
+- **High Contrast** - Enhanced visibility mode
 - **Sleep Screen** - Show dashboard when device wakes
-- **Backup/Restore** - Export and import your data
+- **Backup/Restore** - Export and import your data as JSON
 
-## Keyboard Shortcuts (Emulator/Desktop)
+## Navigation
 
-| Key | Action |
-|-----|--------|
-| `H` | Go to Dashboard (Home) |
-| `Q` | Go to Quests |
-| `J` | Go to Journal |
-| `R` | Go to Reminders |
-| `S` | Go to Settings |
+### Sidebar Tabs
 
-## Dispatcher Actions
+| Tab | Function |
+|-----|----------|
+| **HOME** | Dashboard with overview |
+| **QUEST** | Manage daily/weekly/monthly quests |
+| **DAY** | Timeline/calendar view |
+| **ALARM** | Reminders management |
+| **LOG** | Journal and insights |
+| **READ** | Reading statistics |
 
-Assign to gestures in KOReader settings:
-- `lifetracker_dashboard` - Open Dashboard
-- `lifetracker_quests` - Open Quests
-- `lifetracker_timeline` - Open Timeline
 
 ## Data Storage
 
 Your data is stored in KOReader's settings directory:
-- `lifetracker_data.lua` - Quests, completions, mood logs
-- `lifetracker_settings.lua` - User preferences
 
-Use **Settings > Backup** to export your data as JSON.
+| File | Contents |
+|------|----------|
+| `lifetracker_settings.lua` | User preferences, quotes, streak data |
+| `lifetracker_quests.lua` | Quests and completion history |
+| `lifetracker_logs.lua` | Mood entries and journal notes |
+| `lifetracker_reminders.lua` | Reminder schedules |
+
+Use **Settings > Backup & Restore** to export/import your data as JSON.
+
+## Troubleshooting
+
+### Enable Debug Logging
+
+To enable detailed logging for troubleshooting:
+
+1. Open `modules/data.lua` in the plugin folder
+2. Find line 18: `Data.DEBUG = false`
+3. Change to: `Data.DEBUG = true`
+4. Restart KOReader
+
+Logs will appear in:
+- **Device**: `koreader/crash.log`
+- **Emulator**: Console output or `crash.log`
+
+To view logs on device via SSH:
+```bash
+tail -f /mnt/us/koreader/crash.log  # Kindle
+tail -f /mnt/onboard/.adds/koreader/crash.log  # Kobo
+```
+
+### Common Issues
+
+**Plugin not appearing in menu:**
+- Ensure folder is named `lifetracker.koplugin` (not `.koplugin.zip`)
+- Check that `_meta.lua` and `main.lua` exist in the folder
+- Restart KOReader completely
+
+**Data not saving:**
+- Check available storage space on device
+- Verify write permissions to settings directory
+
+**Sleep screen not showing:**
+- Enable in Settings > Sleep Screen Dashboard
+- Some devices may not support custom sleep screens
 
 ## Designed for E-Ink
 
@@ -131,6 +208,7 @@ Use **Settings > Backup** to export your data as JSON.
 - Large tap targets for touch accuracy
 - Minimal screen refreshes
 - Optimized for grayscale displays
+- Responsive layout for different screen sizes
 
 ## Requirements
 
@@ -141,7 +219,9 @@ Use **Settings > Backup** to export your data as JSON.
 
 Issues and pull requests welcome!
 
-Built with the help of [Claude Code](https://claude.ai/code).
+## Credits
+
+Built with [Claude Code](https://claude.ai/code).
 
 ## License
 
